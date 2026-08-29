@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+*.db
+
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Secrets
+.env
+
+# OpenCode temp
+.tmp/
+
+# OS
+.DS_Store
+
+# OpenCode agent state
+.opencode/goals/
