@@ -1,7 +1,10 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { type FormEvent, useEffect, useState } from "react";
+
 import {
+  type CharacterSheet,
   createSession,
   deleteSession,
+  type GameState,
   getSession,
   getState,
   listSessions,
@@ -9,15 +12,13 @@ import {
   renameSession,
   saveSettings,
   sendAction,
-  type CharacterSheet,
-  type GameState,
   type Session,
   type SessionSummary,
   type TavernSettings,
 } from "./api";
-import Chat, { type Message } from "./components/Chat";
 import CharacterCreationView from "./components/CharacterCreationView";
 import CharacterSheetView from "./components/CharacterSheet";
+import Chat, { type Message } from "./components/Chat";
 import SavedTalesList from "./components/SavedTalesList";
 import SettingsPanel from "./components/SettingsPanel";
 import StateView from "./components/StateView";
@@ -29,7 +30,10 @@ function toMessage(err: unknown): string {
 }
 
 function newId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
     return crypto.randomUUID();
   }
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -41,7 +45,9 @@ function toUiRole(role: string): "player" | "gm" {
 }
 
 /** Guard: a resumed session without a character arrives as an empty object. */
-function isCharacterSheet(value: CharacterSheet | null): value is CharacterSheet {
+function isCharacterSheet(
+  value: CharacterSheet | null,
+): value is CharacterSheet {
   return value !== null && typeof value.name === "string" && value.name !== "";
 }
 
@@ -73,7 +79,6 @@ export default function App() {
   useEffect(() => {
     // Load the saved-tales list once on first mount.
     void refreshSessions();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleSaveSettings = (next: TavernSettings) => {
@@ -268,10 +273,17 @@ export default function App() {
               ← Back to tales
             </button>
             <div className="play-grid">
-              <Chat messages={messages} busy={busy} error={error} onSend={handleSendAction} />
+              <Chat
+                messages={messages}
+                busy={busy}
+                error={error}
+                onSend={handleSendAction}
+              />
               <aside className="play-sidebar">
                 <StateView state={state} />
-                {character !== null && <CharacterSheetView character={character} />}
+                {character !== null && (
+                  <CharacterSheetView character={character} />
+                )}
               </aside>
             </div>
           </>
@@ -315,5 +327,3 @@ function StartView({ busy, error, onStart }: StartViewProps) {
     </section>
   );
 }
-
-

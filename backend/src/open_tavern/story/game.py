@@ -46,9 +46,7 @@ DEFAULT_WORLD_THEME: str = "a classic D&D fantasy world"
 _MAX_HISTORY_MESSAGES: int = 20
 
 
-def _recent_history(
-    history: list[dict[str, str]], limit: int
-) -> list[dict[str, str]]:
+def _recent_history(history: list[dict[str, str]], limit: int) -> list[dict[str, str]]:
     """Return at most the last ``limit`` messages, preserving order."""
     if len(history) <= limit:
         return history

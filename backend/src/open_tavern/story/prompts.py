@@ -37,9 +37,17 @@ def gm_system_prompt(character: CharacterSheet, world_theme: str) -> str:
         lines.append(f"    {ability} {score} ({modifier:+d})")
 
     proficient = sorted(skill for skill, ok in character.skills.items() if ok)
-    lines.append("- Proficient skills: " + (", ".join(proficient) if proficient else "none"))
-    lines.append("- Inventory: " + (", ".join(character.inventory) if character.inventory else "none"))
-    lines.append("- Conditions: " + (", ".join(sorted(character.conditions)) if character.conditions else "none"))
+    lines.append(
+        "- Proficient skills: " + (", ".join(proficient) if proficient else "none")
+    )
+    lines.append(
+        "- Inventory: "
+        + (", ".join(character.inventory) if character.inventory else "none")
+    )
+    lines.append(
+        "- Conditions: "
+        + (", ".join(sorted(character.conditions)) if character.conditions else "none")
+    )
     lines.extend(_character_description_lines(character))
     lines.extend(_tag_protocol_lines())
     return "\n".join(lines)
@@ -174,7 +182,7 @@ def structured_character_gen_prompt(
         '- The player\'s "class concept" (free text) describes what the character does',
         "  and their broad abilities. Map that concept to a single concise",
         '  "character_class" string — any class, role, or archetype is allowed.',
-        "- Pick the hit die (6, 8, 10, 12) that best fits the class and include it as \"hit_die\".",
+        '- Pick the hit die (6, 8, 10, 12) that best fits the class and include it as "hit_die".',
         "",
         "Hard rules:",
         "- abilities must be integers, each in the range 3..18",

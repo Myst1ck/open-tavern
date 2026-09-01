@@ -16,19 +16,24 @@ from open_tavern.protocol import (
     parse,
 )
 
-
 # --- single-tag parsing -------------------------------------------------
 
 
 def test_check_ability_tag():
     turn = parse("[CHECK:strength DC15]")
     assert turn.narration == ""
-    assert turn.actions == (CheckAction(kind="check", name="strength", ability="STR", skill=None, dc=15),)
+    assert turn.actions == (
+        CheckAction(kind="check", name="strength", ability="STR", skill=None, dc=15),
+    )
 
 
 def test_check_skill_tag():
     turn = parse("[CHECK:athletics DC12]")
-    assert turn.actions == (CheckAction(kind="check", name="athletics", ability=None, skill="Athletics", dc=12),)
+    assert turn.actions == (
+        CheckAction(
+            kind="check", name="athletics", ability=None, skill="Athletics", dc=12
+        ),
+    )
 
 
 def test_check_ability_is_case_insensitive():
@@ -116,12 +121,16 @@ def test_hp_negative_tag():
 
 def test_condition_add_tag():
     turn = parse("[CONDITION:+poisoned]")
-    assert turn.actions == (ConditionAction(kind="condition", sign="+", name="poisoned"),)
+    assert turn.actions == (
+        ConditionAction(kind="condition", sign="+", name="poisoned"),
+    )
 
 
 def test_condition_remove_tag():
     turn = parse("[CONDITION:-poisoned]")
-    assert turn.actions == (ConditionAction(kind="condition", sign="-", name="poisoned"),)
+    assert turn.actions == (
+        ConditionAction(kind="condition", sign="-", name="poisoned"),
+    )
 
 
 # --- narration stripping ------------------------------------------------

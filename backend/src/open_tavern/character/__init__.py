@@ -3,8 +3,8 @@
 from open_tavern.character.models import (
     ABILITIES,
     HIT_DIE_SIZES,
-    SKILLS,
     SKILL_ABILITIES,
+    SKILLS,
     STATUS_VALUES,
     AbilityScores,
     CharacterSheet,

@@ -23,14 +23,12 @@ DEFAULT_TEMPERATURE: float = 0.7
 #: the highest-value SSRF targets (cloud metadata, link-local, unspecified,
 #: multicast) while leaving private/loopback hosts allowed for local models such
 #: as Ollama.
-_BLOCKED_NETWORKS: tuple[
-    ipaddress.IPv4Network | ipaddress.IPv6Network, ...
-] = (
+_BLOCKED_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = (
     ipaddress.ip_network("169.254.0.0/16"),  # link-local incl. 169.254.169.254
     ipaddress.ip_network("0.0.0.0/8"),
-    ipaddress.ip_network("::/128"),          # unspecified
-    ipaddress.ip_network("fe80::/10"),       # link-local
-    ipaddress.ip_network("ff00::/8"),        # multicast
+    ipaddress.ip_network("::/128"),  # unspecified
+    ipaddress.ip_network("fe80::/10"),  # link-local
+    ipaddress.ip_network("ff00::/8"),  # multicast
 )
 
 
@@ -75,9 +73,7 @@ def _validate_base_url(url: str) -> None:
             return  # unresolvable — allow; revalidated at request time
         for info in infos:
             if _check_ip(ipaddress.ip_address(info[4][0])):
-                raise ValueError(
-                    f"base URL host {parts.hostname!r} is not allowed"
-                )
+                raise ValueError(f"base URL host {parts.hostname!r} is not allowed") from None
         return
     if _check_ip(addr):
         raise ValueError(f"base URL host {parts.hostname!r} is not allowed")
@@ -96,12 +92,20 @@ class OpenAIClient:
         base_url: str | None = None,
         model: str | None = None,
     ) -> None:
-        self.api_key = api_key if api_key is not None else os.environ.get("OPENAI_API_KEY", "")
+        self.api_key = (
+            api_key if api_key is not None else os.environ.get("OPENAI_API_KEY", "")
+        )
         self.base_url = (
-            base_url if base_url is not None else os.environ.get("OPENAI_BASE_URL", DEFAULT_BASE_URL)
+            base_url
+            if base_url is not None
+            else os.environ.get("OPENAI_BASE_URL", DEFAULT_BASE_URL)
         ).rstrip("/")
         _validate_base_url(self.base_url)
-        self.model = model if model is not None else os.environ.get("OPENAI_MODEL", DEFAULT_MODEL)
+        self.model = (
+            model
+            if model is not None
+            else os.environ.get("OPENAI_MODEL", DEFAULT_MODEL)
+        )
 
     def chat(
         self,

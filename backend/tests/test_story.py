@@ -10,12 +10,12 @@ from open_tavern.character import CharacterSheet, Goal, Quest, normalize
 from open_tavern.story import (
     DEFAULT_BASE_URL,
     DEFAULT_MODEL,
-    OpenAIClient,
     CharacterGenerationError,
     ClassDefinition,
+    OpenAIClient,
+    character_gen_prompt,
     generate_character,
     generate_class,
-    character_gen_prompt,
     gm_system_prompt,
     roll_result_prompt,
     user_action_prompt,
@@ -415,10 +415,11 @@ def test_generate_character_populates_goals_quests_opening_scene():
         Quest(title="Clear the crypt", description="", status="complete"),
     )
     # Opening kept raw on the sheet; the returned value is stripped.
-    assert sheet.opening == "  Mist clings to the cobblestones as you step into the square.  "
-    assert opening == (
-        "Mist clings to the cobblestones as you step into the square."
+    assert (
+        sheet.opening
+        == "  Mist clings to the cobblestones as you step into the square.  "
     )
+    assert opening == ("Mist clings to the cobblestones as you step into the square.")
     assert scene == "a foggy market square"
     # hp recomputed via hit_die: d10 level 2, CON 12 (+1): 10 + 1 + (6 + 1)
     assert sheet.max_hp == 18

@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
+
 import type { RollOutcome } from "../api";
 
 export interface Message {
@@ -40,7 +41,9 @@ export default function Chat({ messages, busy, error, onSend }: ChatProps) {
     <section className="panel chat-panel">
       <div className="chat-list" ref={listRef}>
         {messages.length === 0 && (
-          <p className="chat-empty muted">The tavern is quiet. What do you do?</p>
+          <p className="chat-empty muted">
+            The tavern is quiet. What do you do?
+          </p>
         )}
         {messages.map((message) => (
           <div key={message.id} className={`chat-message ${message.role}`}>
@@ -73,15 +76,17 @@ function RollsDisplay({ rolls }: { rolls: RollOutcome[] }) {
   return (
     <ul className="rolls">
       {rolls.map((roll, index) => {
-        const mod = roll.modifier >= 0 ? `+ ${roll.modifier}` : `- ${Math.abs(roll.modifier)}`;
-        const result =
-          roll.crit_success
-            ? " CRITICAL SUCCESS"
-            : roll.crit_fail
-              ? " CRITICAL FAILURE"
-              : roll.success
-                ? " SUCCESS"
-                : " FAILURE";
+        const mod =
+          roll.modifier >= 0
+            ? `+ ${roll.modifier}`
+            : `- ${Math.abs(roll.modifier)}`;
+        const result = roll.crit_success
+          ? " CRITICAL SUCCESS"
+          : roll.crit_fail
+            ? " CRITICAL FAILURE"
+            : roll.success
+              ? " SUCCESS"
+              : " FAILURE";
         return (
           <li
             key={`${roll.name}-${index}`}

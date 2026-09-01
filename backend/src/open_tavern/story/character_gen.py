@@ -11,8 +11,8 @@ import re
 from dataclasses import dataclass
 
 from open_tavern.character import (
-    CharacterSheet,
     HIT_DIE_SIZES,
+    CharacterSheet,
     normalize,
     validate,
 )

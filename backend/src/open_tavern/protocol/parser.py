@@ -178,9 +178,12 @@ def _parse_damage(body: str) -> DamageAction | None:
     if not _is_dice_expression(dice):
         return None
     count_match = _DICE_COUNT_RE.match(dice)
-    if count_match is not None and count_match.group(1) != "":
-        if int(count_match.group(1)) > MAX_DICE_COUNT:
-            return None
+    if (
+        count_match is not None
+        and count_match.group(1) != ""
+        and int(count_match.group(1)) > MAX_DICE_COUNT
+    ):
+        return None
     return DamageAction(kind="damage", dice=dice)
 
 

@@ -12,7 +12,7 @@ import json
 import sqlite3
 import threading
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from open_tavern.character import CharacterSheet, normalize
@@ -71,7 +71,7 @@ CREATE TABLE IF NOT EXISTS messages (
 
 def _now_iso() -> str:
     """Return the current UTC timestamp as an ISO-8601 string."""
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 class Storage:
@@ -99,29 +99,28 @@ class Storage:
           old (or from a newer build) and incompatible, so the data tables are
           dropped and recreated, then the version recorded.
         """
-        with self._lock:
-            with self._conn:
-                # The meta table must exist before the version can be read.
-                self._conn.executescript(_META_SCHEMA)
-                version = self._read_schema_version()
-                if version == SCHEMA_VERSION:
-                    # Already migrated; run the idempotent DDL as a repair.
-                    self._conn.executescript(_SCHEMA)
-                    return
-                if version is None and not self._table_exists("sessions"):
-                    # Brand-new database: nothing to drop.
-                    self._conn.executescript(_SCHEMA)
-                    self._write_schema_version()
-                    return
-                # Destructive path: legacy unversioned DB or versioned
-                # mismatch. Old/incompatible saves are deleted (approved).
-                self._conn.executescript(
-                    "DROP TABLE IF EXISTS sessions;"
-                    "DROP TABLE IF EXISTS characters;"
-                    "DROP TABLE IF EXISTS messages;"
-                )
+        with self._lock, self._conn:
+            # The meta table must exist before the version can be read.
+            self._conn.executescript(_META_SCHEMA)
+            version = self._read_schema_version()
+            if version == SCHEMA_VERSION:
+                # Already migrated; run the idempotent DDL as a repair.
+                self._conn.executescript(_SCHEMA)
+                return
+            if version is None and not self._table_exists("sessions"):
+                # Brand-new database: nothing to drop.
                 self._conn.executescript(_SCHEMA)
                 self._write_schema_version()
+                return
+            # Destructive path: legacy unversioned DB or versioned
+            # mismatch. Old/incompatible saves are deleted (approved).
+            self._conn.executescript(
+                "DROP TABLE IF EXISTS sessions;"
+                "DROP TABLE IF EXISTS characters;"
+                "DROP TABLE IF EXISTS messages;"
+            )
+            self._conn.executescript(_SCHEMA)
+            self._write_schema_version()
 
     def _table_exists(self, name: str) -> bool:
         """Return ``True`` if a table named ``name`` exists in this database."""
@@ -166,23 +165,20 @@ class Storage:
     def __exit__(self, *exc: object) -> None:
         self.close()
 
-    def create_session(
-        self, world_theme: str, title: str | None = None
-    ) -> str:
+    def create_session(self, world_theme: str, title: str | None = None) -> str:
         """Persist a new session and return its unique id.
 
         ``title`` defaults to ``world_theme`` when omitted or empty.
         """
         session_id = uuid4().hex
         now = _now_iso()
-        with self._lock:
-            with self._conn:
-                self._conn.execute(
-                    "INSERT INTO sessions "
-                    "(id, created_at, world_theme, title, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?)",
-                    (session_id, now, world_theme, title or world_theme, now),
-                )
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO sessions "
+                "(id, created_at, world_theme, title, updated_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (session_id, now, world_theme, title or world_theme, now),
+            )
         return session_id
 
     def save_state(self, session_id: str, state: GameState) -> None:
@@ -192,13 +188,11 @@ class Storage:
         via :meth:`save_character`).
         """
         data_json = json.dumps(state_to_persistable(state))
-        with self._lock:
-            with self._conn:
-                self._conn.execute(
-                    "UPDATE sessions SET state_json = ?, updated_at = ? "
-                    "WHERE id = ?",
-                    (data_json, _now_iso(), session_id),
-                )
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE sessions SET state_json = ?, updated_at = ? WHERE id = ?",
+                (data_json, _now_iso(), session_id),
+            )
 
     def load_state(
         self, session_id: str, character: CharacterSheet
@@ -216,7 +210,6 @@ class Storage:
             if row is None or row["state_json"] is None:
                 return None
             return state_from_persistable(character, json.loads(row["state_json"]))
-
 
     def list_sessions(self) -> list[dict]:
         """Return summary rows ordered by ``updated_at`` descending.
@@ -249,12 +242,11 @@ class Storage:
 
     def rename_session(self, session_id: str, title: str) -> bool:
         """Set ``title`` for ``session_id``; return ``True`` if a row changed."""
-        with self._lock:
-            with self._conn:
-                cur = self._conn.execute(
-                    "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
-                    (title, _now_iso(), session_id),
-                )
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
+                (title, _now_iso(), session_id),
+            )
         return cur.rowcount > 0
 
     def delete_session(self, session_id: str) -> bool:
@@ -263,43 +255,38 @@ class Storage:
         ``state_json`` lives on the ``sessions`` row so it is removed with it.
         Returns ``True`` if the session existed.
         """
-        with self._lock:
-            with self._conn:
-                cur = self._conn.execute(
-                    "DELETE FROM sessions WHERE id = ?", (session_id,)
+        with self._lock, self._conn:
+            cur = self._conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+            existed = cur.rowcount > 0
+            if existed:
+                self._conn.execute(
+                    "DELETE FROM characters WHERE session_id = ?", (session_id,)
                 )
-                existed = cur.rowcount > 0
-                if existed:
-                    self._conn.execute(
-                        "DELETE FROM characters WHERE session_id = ?", (session_id,)
-                    )
-                    self._conn.execute(
-                        "DELETE FROM messages WHERE session_id = ?", (session_id,)
-                    )
+                self._conn.execute(
+                    "DELETE FROM messages WHERE session_id = ?", (session_id,)
+                )
         return existed
 
     def touch_session(self, session_id: str) -> None:
         """Set ``updated_at`` to now for ``session_id``."""
-        with self._lock:
-            with self._conn:
-                self._conn.execute(
-                    "UPDATE sessions SET updated_at = ? WHERE id = ?",
-                    (_now_iso(), session_id),
-                )
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE sessions SET updated_at = ? WHERE id = ?",
+                (_now_iso(), session_id),
+            )
 
     def save_character(self, session_id: str, character: CharacterSheet) -> None:
         """Serialize ``character`` to JSON and upsert it for ``session_id``."""
         data_json = json.dumps(asdict(character))
-        with self._lock:
-            with self._conn:
-                self._conn.execute(
-                    "INSERT INTO characters (session_id, data_json, character_name) "
-                    "VALUES (?, ?, ?) "
-                    "ON CONFLICT(session_id) DO UPDATE SET "
-                    "data_json = excluded.data_json, "
-                    "character_name = excluded.character_name",
-                    (session_id, data_json, character.name or None),
-                )
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO characters (session_id, data_json, character_name) "
+                "VALUES (?, ?, ?) "
+                "ON CONFLICT(session_id) DO UPDATE SET "
+                "data_json = excluded.data_json, "
+                "character_name = excluded.character_name",
+                (session_id, data_json, character.name or None),
+            )
 
     def load_character(self, session_id: str) -> CharacterSheet | None:
         """Reconstruct the character for ``session_id``, or ``None``.
@@ -318,13 +305,12 @@ class Storage:
 
     def append_message(self, session_id: str, role: str, content: str) -> None:
         """Persist a single chat message for ``session_id``."""
-        with self._lock:
-            with self._conn:
-                self._conn.execute(
-                    "INSERT INTO messages (session_id, role, content, created_at) "
-                    "VALUES (?, ?, ?, ?)",
-                    (session_id, role, content, _now_iso()),
-                )
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO messages (session_id, role, content, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                (session_id, role, content, _now_iso()),
+            )
 
     def load_messages(self, session_id: str) -> list[dict]:
         """Return messages for ``session_id`` ordered by insertion id."""

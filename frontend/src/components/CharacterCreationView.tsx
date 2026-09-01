@@ -1,11 +1,12 @@
-import { useState, type FormEvent } from "react";
+import { type FormEvent, useState } from "react";
+
 import {
-  createCharacter,
-  generateClass,
-  refineCharacter,
   type CharacterCreationPayload,
   type CharacterSheet,
   type ClassDefinition,
+  createCharacter,
+  generateClass,
+  refineCharacter,
   type RefineResponse,
 } from "../api";
 
@@ -127,10 +128,12 @@ export default function CharacterCreationView({
   const [error, setError] = useState<string | null>(null);
   const [freeMode, setFreeMode] = useState(false);
   const [description, setDescription] = useState("");
-  const [generatedClass, setGeneratedClass] =
-    useState<ClassDefinition | null>(null);
-  const [acceptedClass, setAcceptedClass] =
-    useState<ClassDefinition | null>(null);
+  const [generatedClass, setGeneratedClass] = useState<ClassDefinition | null>(
+    null,
+  );
+  const [acceptedClass, setAcceptedClass] = useState<ClassDefinition | null>(
+    null,
+  );
   const [classBusy, setClassBusy] = useState(false);
   const [classError, setClassError] = useState<string | null>(null);
   const [refinedProse, setRefinedProse] = useState<RefineResponse | null>(null);
@@ -353,9 +356,7 @@ export default function CharacterCreationView({
                   <div className="panel class-preview">
                     <h3>{generatedClass.name}</h3>
                     <p className="muted">{generatedClass.description}</p>
-                    <p className="muted">
-                      Hit Die: d{generatedClass.hit_die}
-                    </p>
+                    <p className="muted">Hit Die: d{generatedClass.hit_die}</p>
                     {acceptedClass === generatedClass ? (
                       <p className="muted">Class accepted.</p>
                     ) : (
@@ -382,9 +383,7 @@ export default function CharacterCreationView({
                 >
                   {refineBusy ? "Polishing prose..." : "Refine Prose"}
                 </button>
-                {refineError !== null && (
-                  <p className="error">{refineError}</p>
-                )}
+                {refineError !== null && <p className="error">{refineError}</p>}
                 {refinedProse !== null && (
                   <div className="panel refine-preview">
                     <h3>Refined Prose</h3>

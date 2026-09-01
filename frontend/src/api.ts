@@ -236,7 +236,10 @@ export function getMessages(id: string): Promise<ChatMessage[]> {
   return request<ChatMessage[]>(`/sessions/${id}/messages`);
 }
 
-export function renameSession(id: string, title: string): Promise<SessionSummary> {
+export function renameSession(
+  id: string,
+  title: string,
+): Promise<SessionSummary> {
   return request<SessionSummary>(`/sessions/${id}`, {
     method: "PATCH",
     body: JSON.stringify({ title }),
@@ -321,13 +324,10 @@ export function refineCharacter(
   sessionId: string,
   payload: RefinePayload,
 ): Promise<RefineResponse> {
-  return request<RefineResponse>(
-    `/sessions/${sessionId}/character/refine`,
-    {
-      method: "POST",
-      body: JSON.stringify(payload),
-    },
-  );
+  return request<RefineResponse>(`/sessions/${sessionId}/character/refine`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 /**

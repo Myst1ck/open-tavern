@@ -14,9 +14,9 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
+import open_tavern.api.routes as routes_module
 from open_tavern.api.main import create_app
 from open_tavern.api.ratelimit import RateLimiter
-import open_tavern.api.routes as routes_module
 from open_tavern.api.routes import get_client, get_storage
 from open_tavern.character import normalize
 from open_tavern.story.client import LLMClientError

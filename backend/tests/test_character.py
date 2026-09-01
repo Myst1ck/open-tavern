@@ -43,9 +43,22 @@ def _valid_raw() -> dict:
 @pytest.mark.parametrize(
     "score,expected",
     [
-        (3, -4), (4, -3), (5, -3), (6, -2), (7, -2), (8, -1),
-        (9, -1), (10, 0), (11, 0), (12, 1), (13, 1), (14, 2),
-        (15, 2), (16, 3), (17, 3), (18, 4),
+        (3, -4),
+        (4, -3),
+        (5, -3),
+        (6, -2),
+        (7, -2),
+        (8, -1),
+        (9, -1),
+        (10, 0),
+        (11, 0),
+        (12, 1),
+        (13, 1),
+        (14, 2),
+        (15, 2),
+        (16, 3),
+        (17, 3),
+        (18, 4),
     ],
 )
 def test_ability_modifier_formula(score, expected):
@@ -78,11 +91,18 @@ def test_ability_modifier_for_all_six_abilities():
 @pytest.mark.parametrize(
     "level,expected",
     [
-        (1, 2), (2, 2), (3, 2), (4, 2),
-        (5, 3), (8, 3),
-        (9, 4), (12, 4),
-        (13, 5), (16, 5),
-        (17, 6), (20, 6),
+        (1, 2),
+        (2, 2),
+        (3, 2),
+        (4, 2),
+        (5, 3),
+        (8, 3),
+        (9, 4),
+        (12, 4),
+        (13, 5),
+        (16, 5),
+        (17, 6),
+        (20, 6),
     ],
 )
 def test_proficiency_bonus(level, expected):
@@ -165,13 +185,19 @@ def test_validate_rejects_non_mapping():
         (lambda r: r["abilities"].update(LUK=10), "unknown ability key"),
         (lambda r: r["abilities"].pop("CON"), "missing ability score 'CON'"),
         (lambda r: r.update(level=-1), "'level' must be a positive integer"),
-        (lambda r: r.update(character_class="   "), "'character_class' must be a non-empty string"),
+        (
+            lambda r: r.update(character_class="   "),
+            "'character_class' must be a non-empty string",
+        ),
         (lambda r: r.pop("character_class"), "missing 'character_class'"),
         (lambda r: r.update(race=123), "'race' must be a string"),
         (lambda r: r.update(skills="yes"), "'skills' must be a mapping"),
         (lambda r: r.update(skills={"Stealth": "yes"}), "must be a boolean"),
         (lambda r: r.update(skills={"Pickpocketing": True}), "unknown skill"),
-        (lambda r: r.update(inventory="sword"), "'inventory' must be a list of strings"),
+        (
+            lambda r: r.update(inventory="sword"),
+            "'inventory' must be a list of strings",
+        ),
         (lambda r: r.update(name=42), "'name' must be a string"),
     ],
 )
@@ -327,8 +353,12 @@ def test_character_sheet_is_frozen():
 
 def test_ability_scores_is_frozen():
     scores = AbilityScores(
-        strength=10, dexterity=10, constitution=10,
-        intelligence=10, wisdom=10, charisma=10,
+        strength=10,
+        dexterity=10,
+        constitution=10,
+        intelligence=10,
+        wisdom=10,
+        charisma=10,
     )
     with pytest.raises(FrozenInstanceError):
         scores.strength = 12  # type: ignore[misc]

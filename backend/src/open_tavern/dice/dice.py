@@ -86,7 +86,9 @@ def _parse_expression(expression: str) -> tuple[int, int, int]:
         )
     if die not in DIE_SIZES:
         valid = ", ".join(str(size) for size in sorted(DIE_SIZES))
-        raise ValueError(f"Unsupported die size {die!r} in {expression!r}; expected one of: {valid}")
+        raise ValueError(
+            f"Unsupported die size {die!r} in {expression!r}; expected one of: {valid}"
+        )
 
     return count, die, modifier
 

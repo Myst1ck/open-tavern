@@ -375,6 +375,4 @@ def _validate_tracked_item(
         errors.append(f"'{field}' item {index} 'status' must be a string")
         return
     if status not in STATUS_VALUES:
-        errors.append(
-            f"'{field}' item {index} 'status' must be one of {STATUS_VALUES}"
-        )
+        errors.append(f"'{field}' item {index} 'status' must be one of {STATUS_VALUES}")

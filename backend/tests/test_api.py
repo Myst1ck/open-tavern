@@ -11,9 +11,9 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
+import open_tavern.api.routes as routes_module
 from open_tavern.api.main import create_app
 from open_tavern.api.ratelimit import RateLimiter
-import open_tavern.api.routes as routes_module
 from open_tavern.api.routes import (
     _STATE_CACHE,
     build_client_from_headers,
@@ -93,17 +93,14 @@ def test_create_session_rejects_malformed_body(storage):
 def test_create_session_accepts_optional_title(storage):
     client = _make_client(storage, FakeClient([]))
 
-    resp = client.post(
-        "/sessions", json={"world_theme": "gothic", "title": "My Tale"}
-    )
+    resp = client.post("/sessions", json={"world_theme": "gothic", "title": "My Tale"})
 
     assert resp.status_code == 201
     data = resp.json()
     assert data["world_theme"] == "gothic"
     summaries = storage.list_sessions()
     assert any(
-        s["id"] == data["session_id"] and s["title"] == "My Tale"
-        for s in summaries
+        s["id"] == data["session_id"] and s["title"] == "My Tale" for s in summaries
     )
 
 
@@ -521,7 +518,11 @@ def test_create_class_preview_returns_class_definition(storage):
     client = _make_client(
         storage,
         FakeClient(
-            [json.dumps({"name": "spellblade", "description": "A duelist.", "hit_die": 10})]
+            [
+                json.dumps(
+                    {"name": "spellblade", "description": "A duelist.", "hit_die": 10}
+                )
+            ]
         ),
     )
     session_id = storage.create_session("gothic")
@@ -577,7 +578,10 @@ def test_create_character_returns_opening_and_goals_quests(storage):
     expected_opening = "Mist clings to the cobblestones as you step into the square."
     assert data["opening"] == expected_opening
     assert data["character"]["hit_die"] == 10
-    assert data["character"]["class_description"] == "A duelist who weaves cantrips into swordplay."
+    assert (
+        data["character"]["class_description"]
+        == "A duelist who weaves cantrips into swordplay."
+    )
     assert data["character"]["goals"][0]["title"] == "Find the relic"
     assert data["character"]["goals"][0]["status"] == "active"
     assert data["character"]["quests"][0]["status"] == "complete"
@@ -591,9 +595,7 @@ def test_create_character_returns_opening_and_goals_quests(storage):
     saved = storage.load_character(session_id)
     assert saved is not None
     assert saved.hit_die == 10
-    assert saved.class_description == (
-        "A duelist who weaves cantrips into swordplay."
-    )
+    assert saved.class_description == ("A duelist who weaves cantrips into swordplay.")
     assert saved.goals[0].title == "Find the relic"
     assert saved.quests[0].status == "complete"
 

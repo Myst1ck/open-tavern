@@ -52,14 +52,16 @@ export default function CharacterSheetView({ character }: CharacterSheetProps) {
   const personality = character.personality?.trim() ?? "";
   const appearance = character.appearance?.trim() ?? "";
   const motivation = character.motivation?.trim() ?? "";
-  const hasPersona = personality !== "" || appearance !== "" || motivation !== "";
+  const hasPersona =
+    personality !== "" || appearance !== "" || motivation !== "";
   const backstory = character.backstory?.trim() ?? "";
   return (
     <section className="panel sheet-panel">
       <header className="sheet-header">
         <h2>{character.name}</h2>
         <p className="muted">
-          {character.race} · {character.character_class} · Level {character.level}
+          {character.race} · {character.character_class} · Level{" "}
+          {character.level}
         </p>
       </header>
       {personality !== "" && (
@@ -94,9 +96,13 @@ export default function CharacterSheetView({ character }: CharacterSheetProps) {
         {ABILITY_LABELS.map(({ short, key }) => (
           <li key={short}>
             <span className="ability-short">{short}</span>
-            <span className="ability-score">{safeScore(character.abilities[key])}</span>
+            <span className="ability-score">
+              {safeScore(character.abilities[key])}
+            </span>
             <span className="ability-mod">
-              {formatModifier(abilityModifier(safeScore(character.abilities[key])))}
+              {formatModifier(
+                abilityModifier(safeScore(character.abilities[key])),
+              )}
             </span>
           </li>
         ))}
@@ -156,7 +162,10 @@ const STATUS_META: Record<string, { label: string; className: string }> = {
  * Map a goal/quest status to badge text + style. Unknown or missing statuses
  * fall back to a neutral badge so legacy/malformed data still renders.
  */
-function statusMeta(status: GoalStatus | undefined): { label: string; className: string } {
+function statusMeta(status: GoalStatus | undefined): {
+  label: string;
+  className: string;
+} {
   const meta = status !== undefined ? STATUS_META[status] : undefined;
   return meta ?? { label: status ?? "Unknown", className: "status-tag" };
 }
@@ -165,7 +174,13 @@ function statusMeta(status: GoalStatus | undefined): { label: string; className:
  * Shared renderer for Goals and Quests. Items are structurally identical
  * ({ title, description, status }), so one component serves both sections.
  */
-function GoalList({ title, items }: { title: string; items: Goal[] | undefined }) {
+function GoalList({
+  title,
+  items,
+}: {
+  title: string;
+  items: Goal[] | undefined;
+}) {
   return (
     <>
       <h3>{title}</h3>

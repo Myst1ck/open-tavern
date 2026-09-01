@@ -8,7 +8,7 @@ from dataclasses import replace
 import pytest
 
 from open_tavern.character import CharacterSheet, Goal, Quest, normalize
-from open_tavern.state import GameState, new_state, set_scene
+from open_tavern.state import new_state, set_scene
 from open_tavern.storage import Storage
 
 
@@ -195,7 +195,7 @@ def test_create_session_generates_unique_ids(storage):
 
 
 def test_create_session_defaults_title_to_world_theme(storage):
-    session_id = storage.create_session("high fantasy")
+    storage.create_session("high fantasy")
     assert storage.list_sessions()[0]["title"] == "high fantasy"
 
 
@@ -295,7 +295,7 @@ def test_load_state_returns_none_when_absent(storage):
 
 def test_save_state_touches_updated_at(storage):
     first = storage.create_session("gothic")
-    second = storage.create_session("western")
+    storage.create_session("western")
     sheet = _make_character()
 
     storage.save_state(first, new_state(sheet))
@@ -370,7 +370,7 @@ def test_delete_session_missing_returns_false(storage):
 
 def test_touch_session_bumps_updated_at(storage):
     first = storage.create_session("gothic")
-    second = storage.create_session("western")
+    storage.create_session("western")
 
     storage.touch_session(first)
 
@@ -441,9 +441,7 @@ def test_injection_does_not_create_extra_rows(storage):
     session_id = storage.create_session("western")
     storage.append_message(session_id, "user", malicious)
 
-    assert storage.load_messages(session_id) == [
-        {"role": "user", "content": malicious}
-    ]
+    assert storage.load_messages(session_id) == [{"role": "user", "content": malicious}]
     # Sessions table still intact.
     assert storage.load_session(gothic_id) is not None
 
@@ -551,9 +549,7 @@ def test_new_fields_roundtrip_persist_to_load(storage):
     assert loaded is not None
     assert loaded == sheet
     assert loaded.hit_die == 10
-    assert loaded.class_description == (
-        "A duelist who weaves cantrips into swordplay."
-    )
+    assert loaded.class_description == ("A duelist who weaves cantrips into swordplay.")
     assert loaded.goals == (
         Goal(title="Find the relic", description="deep in the ruins", status="active"),
     )

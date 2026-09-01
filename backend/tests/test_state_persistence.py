@@ -94,7 +94,6 @@ def test_round_trip_equality(state):
 
 
 def test_round_trip_uses_passed_character(state):
-    other = new_state(state.character)
     data = state_to_persistable(state)
     # inject a hostile/stale character identity into data — must be ignored
     data["character"] = {"race": "orc"}

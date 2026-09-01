@@ -1,4 +1,5 @@
-import { useState, type FormEvent } from "react";
+import { type FormEvent, useState } from "react";
+
 import type { SessionSummary } from "../api";
 
 interface SavedTalesListProps {
@@ -89,7 +90,8 @@ export default function SavedTalesList({
                     {session.title || "Untitled tale"}
                   </span>
                   <span className="tale-meta muted">
-                    {session.world_theme} · {formatUpdatedAt(session.updated_at)}
+                    {session.world_theme} ·{" "}
+                    {formatUpdatedAt(session.updated_at)}
                   </span>
                 </div>
                 {isEditing ? (

@@ -108,7 +108,14 @@ def test_turn_check_skill_uses_proficiency():
             "race": "human",
             "character_class": "fighter",
             "level": 1,
-            "abilities": {"STR": 16, "DEX": 12, "CON": 14, "INT": 10, "WIS": 10, "CHA": 8},
+            "abilities": {
+                "STR": 16,
+                "DEX": 12,
+                "CON": 14,
+                "INT": 10,
+                "WIS": 10,
+                "CHA": 8,
+            },
             "skills": {"Athletics": True},
         }
     )
