@@ -1,6 +1,6 @@
 # Open Tavern — SETUP / Bring-Up Playbook
 
-Authoritative bring-up doc. Fresh machine → follow this. Generated 2026-08-28 by `/up`. Refreshed 2026-08-29 by `/up` — verified bring-up, all endpoints 200.
+Authoritative bring-up doc. Fresh machine → follow this. Generated 2026-08-28 by `/up`. Refreshed 2026-09-01 by `/up` — verified bring-up, all endpoints 200.
 
 ## Architecture
 
@@ -133,7 +133,7 @@ Remote over internet (not LAN) also needs router port-forwarding to this machine
    backend process env. Missing today → AI features unavailable. Export before starting
    uvicorn, or create `backend/.env` (not loaded automatically — app reads process env only).
 2. No seed data required — empty DB works. 2 dev sessions present in `open_tavern.db`
-   (1 `up-verify` session added during 2026-08-29 `/up` verification POST /sessions; older
+   (1 `up-verify` session added during 2026-09-01 `/up` verification POST /sessions; older
    dev sessions cleaned since last refresh).
 3. `frontend/.env` currently empty (no keys) — fine, frontend derives backend URL from
    browser host. `.env.example` now documents the optional `VITE_API_BASE_URL` override.

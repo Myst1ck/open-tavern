@@ -63,6 +63,27 @@ class CharacterResponse(BaseModel):
     opening: str = ""
 
 
+class RefineRequest(BaseModel):
+    """Request body for refining a character's prose fields.
+
+    All fields optional: unspecified fields pass through unchanged.
+    """
+
+    backstory: str | None = Field(default=None, max_length=2000)
+    personality: str | None = Field(default=None, max_length=2000)
+    appearance: str | None = Field(default=None, max_length=2000)
+    motivation: str | None = Field(default=None, max_length=2000)
+
+
+class RefineResponse(BaseModel):
+    """Response carrying post-refine prose values."""
+
+    backstory: str
+    personality: str
+    appearance: str
+    motivation: str
+
+
 class ClassRequest(BaseModel):
     """Request body for previewing a character class from a concept."""
 

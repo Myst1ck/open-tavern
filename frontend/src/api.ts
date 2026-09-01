@@ -267,6 +267,25 @@ export interface CharacterCreationPayload {
 }
 
 /**
+ * Structured character-refine payload. All prose fields optional —
+ * unspecified fields pass through unchanged on the backend.
+ */
+export interface RefinePayload {
+  backstory?: string;
+  personality?: string;
+  appearance?: string;
+  motivation?: string;
+}
+
+/** Response carrying post-refine prose values. */
+export interface RefineResponse {
+  backstory: string;
+  personality: string;
+  appearance: string;
+  motivation: string;
+}
+
+/**
  * Create a character from a structured payload.
  *
  * Backward-compatible overload: passing a plain string behaves exactly like
@@ -292,6 +311,23 @@ export function createCharacter(
     method: "POST",
     body: JSON.stringify(body),
   });
+}
+
+/**
+ * Refine a character's prose fields (backstory, personality, appearance,
+ * motivation) in one batch. Unspecified fields pass through unchanged.
+ */
+export function refineCharacter(
+  sessionId: string,
+  payload: RefinePayload,
+): Promise<RefineResponse> {
+  return request<RefineResponse>(
+    `/sessions/${sessionId}/character/refine`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
 }
 
 /**

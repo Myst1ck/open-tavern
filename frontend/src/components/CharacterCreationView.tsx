@@ -2,9 +2,11 @@ import { useState, type FormEvent } from "react";
 import {
   createCharacter,
   generateClass,
+  refineCharacter,
   type CharacterCreationPayload,
   type CharacterSheet,
   type ClassDefinition,
+  type RefineResponse,
 } from "../api";
 
 type StepKey =
@@ -77,6 +79,27 @@ const STEPS: WizardStep[] = [
   },
 ];
 
+const PROSE_KEYS = [
+  "backstory",
+  "personality",
+  "appearance",
+  "motivation",
+] as const;
+
+const PROSE_LABELS: Record<(typeof PROSE_KEYS)[number], string> = {
+  backstory: "Backstory",
+  personality: "Personality",
+  appearance: "Appearance",
+  motivation: "Motivation",
+};
+
+function proseUnchanged(
+  refined: RefineResponse,
+  current: Record<StepKey, string>,
+): boolean {
+  return PROSE_KEYS.every((key) => refined[key].trim() === current[key].trim());
+}
+
 function toMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -110,13 +133,23 @@ export default function CharacterCreationView({
     useState<ClassDefinition | null>(null);
   const [classBusy, setClassBusy] = useState(false);
   const [classError, setClassError] = useState<string | null>(null);
+  const [refinedProse, setRefinedProse] = useState<RefineResponse | null>(null);
+  const [refineBusy, setRefineBusy] = useState(false);
+  const [refineError, setRefineError] = useState<string | null>(null);
+  const [refineNote, setRefineNote] = useState<string | null>(null);
 
   const step = STEPS[stepIndex];
   const isLastStep = stepIndex === STEPS.length - 1;
   // Name is the only required step; the rest may be skipped.
   const canNext = step.key !== "name" || values.name.trim() !== "";
+  const hasProse = PROSE_KEYS.some((key) => values[key].trim() !== "");
 
   const handleValueChange = (value: string) => {
+    // Editing after a refine invalidates the pending preview.
+    if (refinedProse !== null) {
+      setRefinedProse(null);
+      setRefineNote(null);
+    }
     setValues((prev) => ({ ...prev, [step.key]: value }));
   };
 
@@ -153,6 +186,56 @@ export default function CharacterCreationView({
     if (generatedClass !== null) {
       setAcceptedClass(generatedClass);
     }
+  };
+
+  const handleRefine = async () => {
+    if (refineBusy || busy || !hasProse) {
+      return;
+    }
+    setRefineBusy(true);
+    setRefineError(null);
+    setRefineNote(null);
+    try {
+      const response = await refineCharacter(sessionId, {
+        backstory: values.backstory.trim(),
+        personality: values.personality.trim(),
+        appearance: values.appearance.trim(),
+        motivation: values.motivation.trim(),
+      });
+      setRefinedProse(response);
+      if (proseUnchanged(response, values)) {
+        setRefineNote(
+          "The forge found nothing to change. Your words stand as written.",
+        );
+      }
+    } catch (err) {
+      setRefineError(toMessage(err));
+    } finally {
+      setRefineBusy(false);
+    }
+  };
+
+  const handleAcceptRefine = () => {
+    if (refinedProse === null) {
+      return;
+    }
+    const accepted = refinedProse;
+    setValues((prev) => ({
+      ...prev,
+      backstory: accepted.backstory,
+      personality: accepted.personality,
+      appearance: accepted.appearance,
+      motivation: accepted.motivation,
+    }));
+    setRefinedProse(null);
+    setRefineNote(null);
+    setRefineError(null);
+  };
+
+  const handleKeepRefine = () => {
+    setRefinedProse(null);
+    setRefineNote(null);
+    setRefineError(null);
   };
 
   const buildPayload = (): CharacterCreationPayload => {
@@ -208,6 +291,10 @@ export default function CharacterCreationView({
     }
     if (!isLastStep) {
       handleNext();
+      return;
+    }
+    // Decide on any pending refine before forging.
+    if (refinedProse !== null || refineBusy) {
       return;
     }
     void submitStructured();
@@ -285,6 +372,56 @@ export default function CharacterCreationView({
                 {classError !== null && <p className="error">{classError}</p>}
               </>
             )}
+            {step.key === "motivation" && (
+              <>
+                <button
+                  type="button"
+                  className="wizard-switch"
+                  onClick={() => void handleRefine()}
+                  disabled={refineBusy || busy || !hasProse}
+                >
+                  {refineBusy ? "Polishing prose..." : "Refine Prose"}
+                </button>
+                {refineError !== null && (
+                  <p className="error">{refineError}</p>
+                )}
+                {refinedProse !== null && (
+                  <div className="panel refine-preview">
+                    <h3>Refined Prose</h3>
+                    {refineNote !== null && (
+                      <p className="muted">{refineNote}</p>
+                    )}
+                    {PROSE_KEYS.map((key) => (
+                      <div key={key} className="sheet-persona-block">
+                        <h3>{PROSE_LABELS[key]}</h3>
+                        <p className="sheet-persona">
+                          {refinedProse[key].trim() !== ""
+                            ? refinedProse[key]
+                            : "—"}
+                        </p>
+                      </div>
+                    ))}
+                    <div className="refine-actions">
+                      <button
+                        type="button"
+                        onClick={handleAcceptRefine}
+                        disabled={busy}
+                      >
+                        Accept
+                      </button>
+                      <button
+                        type="button"
+                        className="wizard-switch"
+                        onClick={handleKeepRefine}
+                        disabled={busy}
+                      >
+                        Keep Originals
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
             <div className="wizard-nav">
               <button
                 type="button"
@@ -296,7 +433,14 @@ export default function CharacterCreationView({
               <span className="wizard-progress">
                 Step {stepIndex + 1} of {STEPS.length}
               </span>
-              <button type="submit" disabled={busy || !canNext}>
+              <button
+                type="submit"
+                disabled={
+                  busy ||
+                  !canNext ||
+                  (isLastStep && (refinedProse !== null || refineBusy))
+                }
+              >
                 {isLastStep
                   ? busy
                     ? "Weaving fate..."

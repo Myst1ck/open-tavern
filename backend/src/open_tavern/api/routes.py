@@ -26,6 +26,8 @@ from open_tavern.api.schemas import (
     ClassResponse,
     CreateSessionRequest,
     CreateSessionResponse,
+    RefineRequest,
+    RefineResponse,
     RenameSessionRequest,
     SessionDetail,
     SessionSummary,
@@ -45,6 +47,7 @@ from open_tavern.story import (
     turn,
 )
 from open_tavern.story.client import LLMClientError
+from open_tavern.story.refine import refine_prose
 
 
 class ChatClient(Protocol):
@@ -297,6 +300,53 @@ def create_class_preview(
             "hit_die": definition.hit_die,
         }
     )
+
+
+@router.post(
+    "/sessions/{session_id}/character/refine",
+    response_model=RefineResponse,
+)
+def refine_character(
+    session_id: str,
+    body: RefineRequest,
+    request: Request,
+    storage: Storage = Depends(get_storage),
+    client: ChatClient = Depends(get_per_request_client),
+) -> RefineResponse:
+    """Preview-refine the session character's prose fields; nothing is persisted.
+
+    Request prose fields override the stored sheet values for prompt context;
+    stored name/race/class/level always anchor the prompt. On ANY LLM failure
+    (``refine_prose`` returns ``None``) the original stored prose is returned
+    verbatim — a silent fallback, never an error.
+    """
+    _ensure_session(storage, session_id)
+    _enforce_rate_limit(request, _character_limiter, "refine")
+    character = _require_character(storage, session_id)
+    context = replace(
+        character,
+        backstory=(
+            body.backstory if body.backstory is not None else character.backstory
+        ),
+        personality=(
+            body.personality if body.personality is not None else character.personality
+        ),
+        appearance=(
+            body.appearance if body.appearance is not None else character.appearance
+        ),
+        motivation=(
+            body.motivation if body.motivation is not None else character.motivation
+        ),
+    )
+    refined = refine_prose(context, client)
+    if refined is None:
+        return RefineResponse(
+            backstory=character.backstory,
+            personality=character.personality,
+            appearance=character.appearance,
+            motivation=character.motivation,
+        )
+    return RefineResponse(**refined)
 
 
 @router.post(
