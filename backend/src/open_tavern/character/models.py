@@ -10,6 +10,7 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 
+from open_tavern.character.items import Item
 from open_tavern.dice.dice import CheckResult, check
 
 #: The six ability scores, in canonical abbreviated form.
@@ -158,7 +159,7 @@ class CharacterSheet:
     max_hp: int
     proficiency_bonus: int
     name: str = ""
-    inventory: tuple[str, ...] = ()
+    inventory: tuple[Item, ...] = ()
     conditions: tuple[str, ...] = ()
     backstory: str = ""
     personality: str = ""

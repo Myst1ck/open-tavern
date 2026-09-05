@@ -1,12 +1,21 @@
-import { type FormEvent, useEffect, useState } from "react";
+import {
+  type FormEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 
 import {
   type CharacterSheet,
   createSession,
+  deleteItem,
   deleteSession,
+  equipItem,
   type GameState,
   getSession,
   getState,
+  type Item,
   listSessions,
   loadSettings,
   renameSession,
@@ -15,10 +24,16 @@ import {
   type Session,
   type SessionSummary,
   type TavernSettings,
+  unequipItem,
+  useItem as callUseItem,
 } from "./api";
 import CharacterCreationView from "./components/CharacterCreationView";
 import CharacterSheetView from "./components/CharacterSheet";
 import Chat, { type Message } from "./components/Chat";
+import FilterBar, { type FilterState } from "./components/FilterBar";
+import InventoryGrid from "./components/InventoryGrid";
+import ItemModal from "./components/ItemModal";
+import ItemTooltip from "./components/ItemTooltip";
 import SavedTalesList from "./components/SavedTalesList";
 import SettingsPanel from "./components/SettingsPanel";
 import StateView from "./components/StateView";
@@ -63,6 +78,13 @@ export default function App() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [sessionsBusy, setSessionsBusy] = useState(false);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
+  const [filter, setFilter] = useState<FilterState>({
+    sortBy: "name",
+    sortDir: "asc",
+  });
+  const [hoveredItem, setHoveredItem] = useState<Item | null>(null);
+  const [hoverPos, setHoverPos] = useState({ x: 0, y: 0 });
+  const [selectedItem, setSelectedItem] = useState<Item | null>(null);
 
   const refreshSessions = async () => {
     setSessionsBusy(true);
@@ -80,6 +102,85 @@ export default function App() {
     // Load the saved-tales list once on first mount.
     void refreshSessions();
   }, []);
+
+  const filteredItems: Item[] = useMemo(() => {
+    const tagFilter = filter.tag?.toLowerCase();
+    return (character?.inventory ?? [])
+      .filter((item) => {
+        if (filter.type && item.type !== filter.type) return false;
+        if (
+          tagFilter &&
+          !item.tags.some((t) => t.toLowerCase().includes(tagFilter))
+        )
+          return false;
+        return true;
+      })
+      .sort((a, b) => {
+        const dir = filter.sortDir === "asc" ? 1 : -1;
+        switch (filter.sortBy) {
+          case "name":
+            return a.name.localeCompare(b.name) * dir;
+          case "type":
+            return a.type.localeCompare(b.type) * dir;
+          case "value":
+            return (a.stats.value - b.stats.value) * dir;
+          case "weight":
+            return (a.stats.weight - b.stats.weight) * dir;
+          default:
+            return 0;
+        }
+      });
+  }, [character?.inventory, filter]);
+
+  const handleItemHover = useCallback((item: Item | null) => {
+    setHoveredItem(item);
+  }, []);
+
+  useEffect(() => {
+    if (!hoveredItem) return;
+    const onMove = (e: MouseEvent) =>
+      setHoverPos({ x: e.clientX, y: e.clientY });
+    window.addEventListener("mousemove", onMove);
+    return () => window.removeEventListener("mousemove", onMove);
+  }, [hoveredItem]);
+
+  const handleItemClick = useCallback((item: Item) => {
+    setSelectedItem(item);
+  }, []);
+
+  const handleItemAction = useCallback(
+    async (action: string, item: Item) => {
+      if (!session || !character) return;
+      try {
+        const charId = session.session_id;
+        let res;
+        switch (action) {
+          case "equip":
+            res = await equipItem(session.session_id, charId, item.id);
+            break;
+          case "unequip":
+            res = await unequipItem(session.session_id, charId, item.id);
+            break;
+          case "use":
+            res = await callUseItem(session.session_id, charId, item.id);
+            break;
+          case "drop":
+            res = await deleteItem(session.session_id, charId, item.id);
+            break;
+          default:
+            return;
+        }
+        if (res.success) {
+          const fresh = await getState(session.session_id);
+          setState(fresh.state);
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Item action failed");
+      }
+      setSelectedItem(null);
+    },
+    [session, character],
+  );
 
   const handleSaveSettings = (next: TavernSettings) => {
     saveSettings(next);
@@ -125,17 +226,6 @@ export default function App() {
       setMessages(persisted.length > 0 ? persisted : [fallback]);
     } catch {
       setMessages([fallback]);
-    }
-    void loadInitialState(session.session_id);
-  };
-
-  const loadInitialState = async (sessionId: string) => {
-    try {
-      const response = await getState(sessionId);
-      setState(response.state);
-    } catch {
-      // State is refreshed from every action response; absence here is fine.
-      setState(null);
     }
   };
 
@@ -284,8 +374,39 @@ export default function App() {
                 {character !== null && (
                   <CharacterSheetView character={character} />
                 )}
+                {character !== null && character.inventory.length > 0 && (
+                  <section className="panel">
+                    <h2>Inventory</h2>
+                    <FilterBar
+                      currentFilter={filter}
+                      onFilterChange={setFilter}
+                    />
+                    <InventoryGrid
+                      items={filteredItems}
+                      onItemClick={handleItemClick}
+                      onItemHover={handleItemHover}
+                    />
+                  </section>
+                )}
               </aside>
             </div>
+            {selectedItem !== null && (
+              <ItemModal
+                item={selectedItem}
+                onClose={() => setSelectedItem(null)}
+                onEquip={(item) => handleItemAction("equip", item)}
+                onUnequip={(item) => handleItemAction("unequip", item)}
+                onUse={(item) => handleItemAction("use", item)}
+                onDrop={(item) => handleItemAction("drop", item)}
+              />
+            )}
+            {hoveredItem !== null && (
+              <ItemTooltip
+                item={hoveredItem}
+                position={hoverPos}
+                visible={true}
+              />
+            )}
           </>
         )}
       </main>

@@ -688,3 +688,267 @@ h3 {
 .refine-actions button {
   margin-top: 0;
 }
+
+/* ── InventoryGrid ──────────────────────────────────────────────── */
+
+.inventory-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.6rem;
+  margin-top: 0.5rem;
+}
+
+.inventory-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.7rem 0.5rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+  text-align: center;
+  font: inherit;
+  color: var(--text);
+}
+
+.inventory-card:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.item-emoji {
+  font-size: 1.5rem;
+  line-height: 1;
+}
+
+.item-name {
+  font-size: 0.82rem;
+  word-break: break-word;
+}
+
+.equipped-badge {
+  font-size: 0.65rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--success);
+  border: 1px solid var(--success);
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+}
+
+/* ── ItemTooltip ────────────────────────────────────────────────── */
+
+.item-tooltip {
+  position: fixed;
+  z-index: 1000;
+  max-width: 260px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.7rem 0.85rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
+
+.tooltip-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+
+.tooltip-name {
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.tooltip-type {
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.tooltip-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.7rem;
+  font-size: 0.78rem;
+  color: var(--accent);
+  margin-bottom: 0.3rem;
+}
+
+.tooltip-stat {
+  white-space: nowrap;
+}
+
+.tooltip-desc {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-style: italic;
+  line-height: 1.4;
+}
+
+/* ── ItemModal ──────────────────────────────────────────────────── */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.item-modal {
+  max-width: 420px;
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.25rem;
+}
+
+.modal-header h2 {
+  margin: 0;
+}
+
+.modal-close {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  padding: 0.3rem 0.6rem;
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.modal-close:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: transparent;
+}
+
+.modal-type {
+  font-size: 0.75rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 0 0 0.75rem;
+}
+
+.modal-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+}
+
+.modal-stat {
+  display: flex;
+  flex-direction: column;
+  background: var(--panel-2);
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+}
+
+.modal-stat-label {
+  font-size: 0.65rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.modal-stat-value {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.modal-desc {
+  font-size: 0.88rem;
+  line-height: 1.5;
+  margin: 0 0 0.75rem;
+  white-space: pre-wrap;
+}
+
+.modal-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.75rem;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.modal-actions button {
+  margin-top: 0;
+}
+
+.modal-drop-btn {
+  background: transparent;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+}
+
+.modal-drop-btn:hover:not(:disabled) {
+  background: var(--danger);
+  color: #1a120a;
+}
+
+/* ── FilterBar ──────────────────────────────────────────────────── */
+
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+  align-items: flex-end;
+}
+
+.filter-bar label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin-bottom: 0;
+  font-size: 0.72rem;
+}
+
+.filter-bar select,
+.filter-bar input {
+  width: auto;
+  min-width: 130px;
+  padding: 0.4rem 0.55rem;
+  font-size: 0.82rem;
+}
+
+/* ── Responsive ─────────────────────────────────────────────────── */
+
+@media (min-width: 600px) {
+  .inventory-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (min-width: 900px) {
+  .inventory-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}

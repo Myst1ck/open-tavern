@@ -41,7 +41,14 @@ export function loadSettings(): TavernSettings {
 /** Persist settings to localStorage. */
 export function saveSettings(settings: TavernSettings): void {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  cachedSettings = { ...settings };
 }
+
+/**
+ * Module-level cache of the parsed localStorage settings, refreshed on save.
+ * Avoids re-reading and re-parsing localStorage on every API request.
+ */
+let cachedSettings: TavernSettings = loadSettings();
 
 function settingsHeaders(settings: TavernSettings): Record<string, string> {
   const headers: Record<string, string> = {};
@@ -95,6 +102,28 @@ export interface AbilityScores {
 
 export type GoalStatus = "active" | "complete" | "failed";
 
+export type BaseType =
+  "weapon" | "armor" | "consumable" | "quest" | "loot" | "key";
+
+export interface ItemStats {
+  damage: number;
+  armor: number;
+  value: number;
+  weight: number;
+  extra: Record<string, unknown>;
+}
+
+export interface Item {
+  id: string;
+  name: string;
+  type: BaseType;
+  tags: string[];
+  stats: ItemStats;
+  description: string;
+  equipped: boolean;
+  quantity: number;
+}
+
 export interface Goal {
   title: string;
   description: string;
@@ -124,7 +153,7 @@ export interface CharacterSheet {
   hp: number;
   max_hp: number;
   proficiency_bonus: number;
-  inventory: string[];
+  inventory: Item[];
   conditions: string[];
   backstory: string;
   personality?: string;
@@ -151,7 +180,6 @@ export interface RollOutcome {
 export interface GameState {
   current_hp: number;
   max_hp: number;
-  inventory: string[];
   conditions: string[];
   scene: string;
   character: CharacterSheet;
@@ -187,7 +215,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     ...init,
     headers: {
       "Content-Type": "application/json",
-      ...settingsHeaders(loadSettings()),
+      ...settingsHeaders(cachedSettings),
     },
   });
   if (!response.ok) {
@@ -358,4 +386,102 @@ export function sendAction(
 
 export function getState(sessionId: string): Promise<StateResponse> {
   return request<StateResponse>(`/sessions/${sessionId}/state`);
+}
+
+// ── Item API types ──────────────────────────────────────────────
+
+export type ItemResponse = Item;
+
+export interface ItemListResponse {
+  items: Item[];
+}
+
+export interface ItemActionResponse {
+  success: boolean;
+  item: Item | null;
+  message: string;
+}
+
+export interface CreateItemRequest {
+  name: string;
+  type?: BaseType;
+  stats?: Partial<ItemStats>;
+  tags?: string[];
+  description?: string;
+}
+
+// ── Item API functions ───────────────────────────────────────────
+
+export function createItem(
+  sessionId: string,
+  characterId: string,
+  data: CreateItemRequest,
+): Promise<ItemResponse> {
+  return request<ItemResponse>(
+    `/sessions/${sessionId}/characters/${characterId}/items`,
+    { method: "POST", body: JSON.stringify(data) },
+  );
+}
+
+export function listItems(
+  sessionId: string,
+  characterId: string,
+): Promise<ItemListResponse> {
+  return request<ItemListResponse>(
+    `/sessions/${sessionId}/characters/${characterId}/items`,
+  );
+}
+
+export function getItem(
+  sessionId: string,
+  characterId: string,
+  itemId: string,
+): Promise<ItemResponse> {
+  return request<ItemResponse>(
+    `/sessions/${sessionId}/characters/${characterId}/items/${itemId}`,
+  );
+}
+
+export function deleteItem(
+  sessionId: string,
+  characterId: string,
+  itemId: string,
+): Promise<ItemActionResponse> {
+  return request<ItemActionResponse>(
+    `/sessions/${sessionId}/characters/${characterId}/items/${itemId}`,
+    { method: "DELETE" },
+  );
+}
+
+export function equipItem(
+  sessionId: string,
+  characterId: string,
+  itemId: string,
+): Promise<ItemActionResponse> {
+  return request<ItemActionResponse>(
+    `/sessions/${sessionId}/characters/${characterId}/items/${itemId}/equip`,
+    { method: "POST" },
+  );
+}
+
+export function unequipItem(
+  sessionId: string,
+  characterId: string,
+  itemId: string,
+): Promise<ItemActionResponse> {
+  return request<ItemActionResponse>(
+    `/sessions/${sessionId}/characters/${characterId}/items/${itemId}/unequip`,
+    { method: "POST" },
+  );
+}
+
+export function useItem(
+  sessionId: string,
+  characterId: string,
+  itemId: string,
+): Promise<ItemActionResponse> {
+  return request<ItemActionResponse>(
+    `/sessions/${sessionId}/characters/${characterId}/items/${itemId}/use`,
+    { method: "POST" },
+  );
 }

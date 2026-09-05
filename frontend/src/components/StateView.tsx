@@ -38,18 +38,6 @@ export default function StateView({ state }: StateViewProps) {
         <h3>Scene</h3>
         <p>{state.scene}</p>
       </div>
-      <h3>Inventory</h3>
-      {state.inventory.length === 0 ? (
-        <p className="muted">Empty hands.</p>
-      ) : (
-        <ul className="chip-list">
-          {state.inventory.map((item, index) => (
-            <li key={`${item}-${index}`} className="chip">
-              {item}
-            </li>
-          ))}
-        </ul>
-      )}
       <h3>Conditions</h3>
       {state.conditions.length === 0 ? (
         <p className="muted">None</p>

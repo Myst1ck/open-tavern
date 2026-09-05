@@ -9,6 +9,7 @@ Tuples and frozensets become lists so the payloads encode cleanly.
 from __future__ import annotations
 
 from dataclasses import asdict
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -142,6 +143,47 @@ class RenameSessionRequest(BaseModel):
     title: str = Field(max_length=200)
 
 
+class ItemResponse(BaseModel):
+    """Response carrying a single item's data."""
+
+    id: str
+    name: str
+    type: str
+    tags: list[str]
+    stats: dict
+    description: str
+    equipped: bool
+    quantity: int
+
+
+class ItemListResponse(BaseModel):
+    """Response carrying a list of items."""
+
+    items: list[ItemResponse]
+
+
+class ItemActionResponse(BaseModel):
+    """Response for item mutation operations."""
+
+    success: bool
+    item: ItemResponse | None = None
+    message: str
+
+
+class CreateItemRequest(BaseModel):
+    """Request body for creating a new item.
+
+    ``stats`` is intentionally freeform (``dict[str, Any]``); numeric coercion
+    and clamping happen in :meth:`ItemStats.from_dict`.
+    """
+
+    name: str = Field(max_length=200)
+    type: str | None = Field(default=None, max_length=50)
+    stats: dict[str, Any] | None = None
+    tags: list[str] | None = None
+    description: str | None = Field(default=None, max_length=2000)
+
+
 def character_to_dict(character: CharacterSheet) -> dict:
     """Serialize a :class:`CharacterSheet` into a JSON-friendly dict."""
     return {
@@ -154,7 +196,7 @@ def character_to_dict(character: CharacterSheet) -> dict:
         "hp": character.hp,
         "max_hp": character.max_hp,
         "proficiency_bonus": character.proficiency_bonus,
-        "inventory": list(character.inventory),
+        "inventory": [item.to_dict() for item in character.inventory],
         "conditions": list(character.conditions),
         "backstory": character.backstory,
         "personality": character.personality,
@@ -173,7 +215,6 @@ def state_to_dict(state: GameState) -> dict:
     return {
         "current_hp": state.current_hp,
         "max_hp": state.max_hp,
-        "inventory": list(state.inventory),
         "conditions": sorted(state.conditions),
         "scene": state.scene,
         "character": character_to_dict(state.character),

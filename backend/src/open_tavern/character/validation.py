@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from open_tavern.character.items import Item
 from open_tavern.character.models import (
     ABILITIES,
     HIT_DIE_SIZES,
@@ -116,7 +117,7 @@ def normalize(raw: object) -> CharacterSheet:
         max_hp=max_hp,
         proficiency_bonus=proficiency_bonus(level),
         skills=_build_skills(raw.get("skills")),
-        inventory=tuple(raw.get("inventory", ())),
+        inventory=_build_inventory(raw.get("inventory")),
         conditions=tuple(raw.get("conditions", ())),
         backstory=raw.get("backstory", DEFAULT_BACKSTORY),
         personality=raw.get("personality", DEFAULT_PERSONALITY),
@@ -189,6 +190,22 @@ def _build_quests(raw_quests: object) -> tuple[Quest, ...]:
             )
         )
     return tuple(quests)
+
+
+def _build_inventory(raw_inventory: object) -> tuple[Item, ...]:
+    """Reconstruct :class:`Item` objects from a raw list of dicts.
+
+    Each dict is passed through ``Item.from_dict()`` for safe deserialization.
+    Non-mapping items are dropped (validation already rejects them).
+    """
+    if not isinstance(raw_inventory, (list, tuple)):
+        return ()
+    items: list[Item] = []
+    for entry in raw_inventory:
+        if not isinstance(entry, dict):
+            continue
+        items.append(Item.from_dict(entry))
+    return tuple(items)
 
 
 def _validate_abilities(abilities: object, errors: list[str]) -> None:
@@ -296,10 +313,17 @@ def _validate_inventory(inventory: object, errors: list[str]) -> None:
     if inventory is None:
         return
     if not isinstance(inventory, (list, tuple)):
-        errors.append("'inventory' must be a list of strings")
+        errors.append("'inventory' must be a list of objects")
         return
-    if not all(isinstance(item, str) for item in inventory):
-        errors.append("'inventory' items must be strings")
+    for index, item in enumerate(inventory):
+        if not isinstance(item, dict):
+            errors.append(f"'inventory' item {index} must be an object")
+            continue
+        if not isinstance(item.get("name"), str) or not item["name"].strip():
+            errors.append(f"'inventory' item {index} 'name' must be a non-empty string")
+        raw_type = item.get("type")
+        if raw_type is not None and not isinstance(raw_type, str):
+            errors.append(f"'inventory' item {index} 'type' must be a string")
 
 
 def _validate_conditions(conditions: object, errors: list[str]) -> None:

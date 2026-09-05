@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from open_tavern.character import CharacterSheet, normalize
+from open_tavern.character.items import Item
 from open_tavern.state import GameState, state_from_persistable, state_to_persistable
 
 #: Current schema version, tracked in the ``meta`` table.
@@ -28,7 +29,7 @@ from open_tavern.state import GameState, state_from_persistable, state_to_persis
 #:     are deleted, never preserved, backfilled, or migrated.
 #:   * 2 — this change: adds the ``meta`` table with a ``schema_version`` row
 #:     so incompatible layouts are detected and dropped/recreated.
-SCHEMA_VERSION: int = 2
+SCHEMA_VERSION: int = 3
 
 #: ``meta`` row key holding the schema version written by :meth:`Storage.init`.
 _SCHEMA_VERSION_KEY: str = "schema_version"
@@ -66,6 +67,17 @@ CREATE TABLE IF NOT EXISTS messages (
     content TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS items (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    character_id TEXT NOT NULL,
+    item_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id);
+CREATE INDEX IF NOT EXISTS idx_items_session ON items(session_id, character_id);
 """
 
 
@@ -118,6 +130,7 @@ class Storage:
                 "DROP TABLE IF EXISTS sessions;"
                 "DROP TABLE IF EXISTS characters;"
                 "DROP TABLE IF EXISTS messages;"
+                "DROP TABLE IF EXISTS items;"
             )
             self._conn.executescript(_SCHEMA)
             self._write_schema_version()
@@ -153,6 +166,61 @@ class Storage:
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (_SCHEMA_VERSION_KEY, str(SCHEMA_VERSION)),
         )
+
+    # ── Items ────────────────────────────────────────────────────────────────
+
+    def save_item(self, session_id: str, character_id: str, item: Item) -> None:
+        """INSERT OR REPLACE ``item`` for ``session_id`` + ``character_id``."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO items (id, session_id, character_id, item_json) "
+                "VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET "
+                "item_json = excluded.item_json",
+                (item.id, session_id, character_id, json.dumps(item.to_dict())),
+            )
+
+    def load_items(self, session_id: str, character_id: str) -> list[Item]:
+        """Return all items for ``session_id`` + ``character_id``."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT item_json FROM items WHERE session_id = ? AND character_id = ?",
+                (session_id, character_id),
+            ).fetchall()
+        return [Item.from_dict(json.loads(r["item_json"])) for r in rows]
+
+    def load_item(
+        self, session_id: str, character_id: str, item_id: str
+    ) -> Item | None:
+        """Return single item by id, or ``None``."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT item_json FROM items "
+                "WHERE session_id = ? AND character_id = ? AND id = ?",
+                (session_id, character_id, item_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return Item.from_dict(json.loads(row["item_json"]))
+
+    def delete_item(self, session_id: str, character_id: str, item_id: str) -> bool:
+        """Delete item by id. Return ``True`` if a row was removed."""
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "DELETE FROM items "
+                "WHERE session_id = ? AND character_id = ? AND id = ?",
+                (session_id, character_id, item_id),
+            )
+        return cur.rowcount > 0
+
+    def update_item(self, session_id: str, character_id: str, item: Item) -> None:
+        """Update ``item_json`` for existing item (matched by id)."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE items SET item_json = ? "
+                "WHERE session_id = ? AND character_id = ? AND id = ?",
+                (json.dumps(item.to_dict()), session_id, character_id, item.id),
+            )
 
     def close(self) -> None:
         """Close the underlying connection. Safe to call more than once."""
@@ -211,12 +279,14 @@ class Storage:
                 return None
             return state_from_persistable(character, json.loads(row["state_json"]))
 
-    def list_sessions(self) -> list[dict]:
+    def list_sessions(self, limit: int = 50, offset: int = 0) -> list[dict]:
         """Return summary rows ordered by ``updated_at`` descending.
 
         Each row is ``{id, title, world_theme, created_at, updated_at,
         character_name}``; ``character_name`` is pulled from the joined
         character's ``character_name`` column (``None`` when no character saved).
+        ``limit`` caps the result size (default 50) and ``offset`` pages
+        through it, so the query stays bounded on large databases.
         """
         with self._lock:
             rows = self._conn.execute(
@@ -224,7 +294,9 @@ class Storage:
                 "c.character_name AS character_name "
                 "FROM sessions AS s "
                 "LEFT JOIN characters AS c ON c.session_id = s.id "
-                "ORDER BY s.updated_at DESC"
+                "ORDER BY s.updated_at DESC "
+                "LIMIT ? OFFSET ?",
+                (limit, offset),
             ).fetchall()
             result: list[dict] = []
             for row in rows:
@@ -250,7 +322,7 @@ class Storage:
         return cur.rowcount > 0
 
     def delete_session(self, session_id: str) -> bool:
-        """Delete a session and its character and messages.
+        """Delete a session and its character, messages, and items.
 
         ``state_json`` lives on the ``sessions`` row so it is removed with it.
         Returns ``True`` if the session existed.
@@ -264,6 +336,9 @@ class Storage:
                 )
                 self._conn.execute(
                     "DELETE FROM messages WHERE session_id = ?", (session_id,)
+                )
+                self._conn.execute(
+                    "DELETE FROM items WHERE session_id = ?", (session_id,)
                 )
         return existed
 
@@ -313,13 +388,42 @@ class Storage:
             )
 
     def load_messages(self, session_id: str) -> list[dict]:
-        """Return messages for ``session_id`` ordered by insertion id."""
+        """Return the most recent messages for ``session_id`` in insertion order.
+
+        The story engine keeps at most 20 recent turns in its prompt history
+        (``story.game._MAX_HISTORY_MESSAGES``), so only that window is fetched:
+        rows are selected newest-first and reversed in Python, avoiding an
+        unbounded read of the whole transcript.
+        """
         with self._lock:
             rows = self._conn.execute(
-                "SELECT role, content FROM messages WHERE session_id = ? ORDER BY id",
+                "SELECT role, content FROM messages "
+                "WHERE session_id = ? ORDER BY id DESC LIMIT 20",
                 (session_id,),
             ).fetchall()
-        return [{"role": row["role"], "content": row["content"]} for row in rows]
+        return [
+            {"role": row["role"], "content": row["content"]} for row in reversed(rows)
+        ]
+
+    def session_exists(self, session_id: str) -> bool:
+        """Return ``True`` if a session row with ``session_id`` exists.
+
+        Existence check without loading the character JSON or transcript, so
+        endpoint guards stay O(1) instead of issuing three queries.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM sessions WHERE id = ?", (session_id,)
+            ).fetchone()
+        return row is not None
+
+    def character_exists(self, session_id: str) -> bool:
+        """Return ``True`` if a character row exists for ``session_id``."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM characters WHERE session_id = ?", (session_id,)
+            ).fetchone()
+        return row is not None
 
     def load_session(self, session_id: str) -> dict | None:
         """Return full session state, or ``None`` if the session is unknown."""

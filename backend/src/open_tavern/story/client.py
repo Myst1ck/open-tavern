@@ -18,6 +18,13 @@ import httpx
 DEFAULT_BASE_URL: str = "https://api.openai.com/v1"
 DEFAULT_MODEL: str = "gpt-4o-mini"
 DEFAULT_TEMPERATURE: float = 0.7
+DEFAULT_TIMEOUT: float = 60.0
+
+#: Shared HTTP client reused across LLM calls so keep-alive connections are
+#: pooled instead of a fresh connection per request. ``httpx.Client`` is
+#: thread-safe and hosts are pooled independently, so one instance serves any
+#: per-request ``base_url``. See https://www.python-httpx.org/advanced/clients/
+_HTTP_CLIENT: httpx.Client = httpx.Client(timeout=DEFAULT_TIMEOUT)
 
 #: Networks never reachable by a legitimate LLM endpoint. Blocking these closes
 #: the highest-value SSRF targets (cloud metadata, link-local, unspecified,
@@ -73,7 +80,9 @@ def _validate_base_url(url: str) -> None:
             return  # unresolvable — allow; revalidated at request time
         for info in infos:
             if _check_ip(ipaddress.ip_address(info[4][0])):
-                raise ValueError(f"base URL host {parts.hostname!r} is not allowed") from None
+                raise ValueError(
+                    f"base URL host {parts.hostname!r} is not allowed"
+                ) from None
         return
     if _check_ip(addr):
         raise ValueError(f"base URL host {parts.hostname!r} is not allowed")
@@ -127,11 +136,11 @@ class OpenAIClient:
             "Content-Type": "application/json",
         }
         try:
-            response = httpx.post(
+            response = _HTTP_CLIENT.post(
                 f"{self.base_url}/chat/completions",
                 json=payload,
                 headers=headers,
-                timeout=60.0,
+                timeout=DEFAULT_TIMEOUT,
             )
             response.raise_for_status()
             data = response.json()

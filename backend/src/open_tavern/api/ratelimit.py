@@ -25,13 +25,18 @@ class RateLimiter:
         """Return ``True`` and record a hit if ``key`` is under the limit."""
         now = time.monotonic()
         with self._lock:
-            hits = self._hits.setdefault(key, deque())
+            hits = self._hits.get(key)
+            if hits is None:
+                hits = self._hits[key] = deque()
             while hits and now - hits[0] >= self.window_seconds:
                 hits.popleft()
-            if len(hits) >= self.max_requests:
-                return False
-            hits.append(now)
-            return True
+            allowed = len(hits) < self.max_requests
+            if allowed:
+                hits.append(now)
+            # Prune idle keys so the backing dict cannot grow unbounded.
+            if not hits:
+                del self._hits[key]
+            return allowed
 
     def reset(self) -> None:
         """Clear all recorded hits."""

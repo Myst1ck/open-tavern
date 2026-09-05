@@ -14,6 +14,7 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass, replace
 
+from open_tavern.character.items import BaseType, Item
 from open_tavern.character.models import CharacterSheet
 from open_tavern.dice import check as dice_check
 from open_tavern.dice import roll_expression
@@ -190,8 +191,12 @@ def _resolve_check(
 
 def _apply_item(state: GameState, action: ItemAction) -> GameState:
     if action.sign == "+":
-        return add_item(state, action.name)
-    return remove_item(state, action.name)
+        item = Item(name=action.name, type=BaseType.loot)
+        return add_item(state, item)
+    for existing in state.character.inventory:
+        if existing.name == action.name:
+            return remove_item(state, existing.id)
+    return state
 
 
 def _apply_condition(state: GameState, action: ConditionAction) -> GameState:

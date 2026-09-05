@@ -40,16 +40,32 @@ def gm_system_prompt(character: CharacterSheet, world_theme: str) -> str:
     lines.append(
         "- Proficient skills: " + (", ".join(proficient) if proficient else "none")
     )
-    lines.append(
-        "- Inventory: "
-        + (", ".join(character.inventory) if character.inventory else "none")
-    )
+    lines.append("- Inventory:")
+    if character.inventory:
+        for item in character.inventory:
+            stats_parts = []
+            if item.stats.damage:
+                stats_parts.append(f"dmg:{item.stats.damage}")
+            if item.stats.armor:
+                stats_parts.append(f"ac:{item.stats.armor}")
+            if item.stats.value:
+                stats_parts.append(f"val:{item.stats.value}")
+            if item.stats.weight:
+                stats_parts.append(f"wt:{item.stats.weight}")
+            stats_str = f" ({', '.join(stats_parts)})" if stats_parts else ""
+            equipped_str = " [equipped]" if item.equipped else ""
+            lines.append(
+                f"  - {item.name} ({item.type.value}){stats_str}{equipped_str}"
+            )
+    else:
+        lines.append("  - none")
     lines.append(
         "- Conditions: "
         + (", ".join(sorted(character.conditions)) if character.conditions else "none")
     )
     lines.extend(_character_description_lines(character))
     lines.extend(_tag_protocol_lines())
+    lines.extend(_item_json_schema_lines())
     return "\n".join(lines)
 
 
@@ -69,7 +85,11 @@ def character_gen_prompt(description: str) -> str:
         '- "abilities": object mapping each of STR, DEX, CON, INT, WIS, CHA '
         "(or their full names) to an integer score (required)",
         '- "skills": object mapping skill names to true/false (optional)',
-        '- "inventory": array of strings (optional)',
+        '- "inventory": array of objects (optional) — each item object has:',
+        '  {"name": "...", "type": "weapon|armor|consumable|quest|loot|key", '
+        '"damage": 0, "armor": 0, "value": 0, "weight": 0, "extra": {}, '
+        '"tags": [], "description": "..."}',
+        '  Only "name" is required; other fields default to 0/empty.',
         '- "backstory": string (optional)',
         '- "class_description": string (optional) — prose describing what the class does',
         '- "goals": array of objects (optional) — each {"title": string, '
@@ -163,7 +183,11 @@ def structured_character_gen_prompt(
         '- "abilities": object mapping each of STR, DEX, CON, INT, WIS, CHA '
         "(or their full names) to an integer score (required)",
         '- "skills": object mapping skill names to true/false (optional)',
-        '- "inventory": array of strings (optional)',
+        '- "inventory": array of objects (optional) — each item object has:',
+        '  {"name": "...", "type": "weapon|armor|consumable|quest|loot|key", '
+        '"damage": 0, "armor": 0, "value": 0, "weight": 0, "extra": {}, '
+        '"tags": [], "description": "..."}',
+        '  Only "name" is required; other fields default to 0/empty.',
         '- "backstory": string (optional)',
         '- "personality": string (optional)',
         '- "appearance": string (optional)',
@@ -366,6 +390,8 @@ def _tag_protocol_lines() -> list[str]:
         "- [DAMAGE:<dice>] — e.g. [DAMAGE:2d6+3]; the engine rolls the dice and applies it.",
         "- [HP:<+n or -n>] — change hit points directly, e.g. [HP:-3].",
         "- [ITEM:+<name>] / [ITEM:-<name>] — add or remove an inventory item.",
+        "  When adding an item, also include its structured JSON in your narration",
+        "  (see ITEM JSON FORMAT below).",
         "- [CONDITION:+<name>] / [CONDITION:-<name>] — apply or clear a condition.",
         "",
         "RULES:",
@@ -373,4 +399,31 @@ def _tag_protocol_lines() -> list[str]:
         "- When an outcome is uncertain, request a check with [CHECK:...] and stop there;",
         "  the engine resolves the roll and tells you the result to narrate.",
         "- Do not announce success or failure before the engine has resolved the roll.",
+    ]
+
+
+def _item_json_schema_lines() -> list[str]:
+    """Return the item JSON schema block for GM and character-gen prompts."""
+    return [
+        "",
+        "ITEM JSON FORMAT:",
+        "When you add an item with [ITEM:+name], include a JSON object describing it.",
+        "The JSON object uses this schema:",
+        '{  "name": "<item name>",',
+        '   "type": "weapon" | "armor" | "consumable" | "quest" | "loot" | "key",',
+        '   "damage": <int>,',
+        '   "armor": <int>,',
+        '   "value": <int>,',
+        '   "weight": <float>,',
+        '   "extra": {},',
+        '   "tags": ["<tag1>", "<tag2>"],',
+        '   "description": "<prose description>"',
+        "}",
+        'Only "name" and "type" are required; other fields default to 0/empty.',
+        "Example:",
+        '{"name": "Iron Sword", "type": "weapon", "damage": 6, "value": 15, '
+        '"weight": 3.0, "tags": ["metal"], "description": "A sturdy iron blade."}',
+        "",
+        "Backward compatibility: if you only provide a plain name via [ITEM:+name],",
+        "the engine creates a default item (type: loot, no stats).",
     ]
