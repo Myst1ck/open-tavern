@@ -952,3 +952,25 @@ h3 {
     grid-template-columns: repeat(4, 1fr);
   }
 }
+
+/* ─── Character creation auto-fill ─── */
+
+.char-fill-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  padding: 0.35rem 0.7rem;
+  font-size: 0.8rem;
+}
+
+.char-fill-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: transparent;
+}
+
+.char-last-hint {
+  font-size: 0.85em;
+  color: var(--text-muted);
+  margin: 0.25rem 0 0;
+}

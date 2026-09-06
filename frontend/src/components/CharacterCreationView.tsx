@@ -1,4 +1,4 @@
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 
 import {
   type CharacterCreationPayload,
@@ -9,6 +9,11 @@ import {
   refineCharacter,
   type RefineResponse,
 } from "../api";
+import {
+  clearCharDraft,
+  loadCharDraft,
+  saveCharDraft,
+} from "../characterDraft";
 
 type StepKey =
   | "name"
@@ -123,6 +128,9 @@ export default function CharacterCreationView({
     appearance: "",
     motivation: "",
   });
+  const [draft, setDraft] = useState<Record<string, string>>(() =>
+    loadCharDraft(),
+  );
   const [stepIndex, setStepIndex] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -141,11 +149,47 @@ export default function CharacterCreationView({
   const [refineError, setRefineError] = useState<string | null>(null);
   const [refineNote, setRefineNote] = useState<string | null>(null);
 
+  // Persist draft with a short debounce instead of on every keystroke.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (Object.keys(draft).length === 0) {
+        return;
+      }
+      try {
+        saveCharDraft(draft);
+      } catch {
+        // Draft is convenience data; ignore private-mode/storage failures.
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [draft]);
+
   const step = STEPS[stepIndex];
   const isLastStep = stepIndex === STEPS.length - 1;
   // Name is the only required step; the rest may be skipped.
   const canNext = step.key !== "name" || values.name.trim() !== "";
   const hasProse = PROSE_KEYS.some((key) => values[key].trim() !== "");
+  const hasDraft = Object.keys(draft).length > 0;
+
+  const handleFillDraft = () => {
+    // Restore each step from the draft, skipping stale or empty values.
+    const next: Record<StepKey, string> = { ...values };
+    for (const item of STEPS) {
+      const value = draft[item.key];
+      if (value.trim() !== "") {
+        next[item.key] = value;
+      }
+    }
+    setValues(next);
+    // Filled values supersede the draft; drop it so the button disappears.
+    setDraft({});
+    clearCharDraft();
+    // Restored prose invalidates any pending refine preview.
+    if (refinedProse !== null) {
+      setRefinedProse(null);
+      setRefineNote(null);
+    }
+  };
 
   const handleValueChange = (value: string) => {
     // Editing after a refine invalidates the pending preview.
@@ -154,6 +198,7 @@ export default function CharacterCreationView({
       setRefineNote(null);
     }
     setValues((prev) => ({ ...prev, [step.key]: value }));
+    setDraft({ ...draft, [step.key]: value });
   };
 
   const handleNext = () => {
@@ -178,6 +223,8 @@ export default function CharacterCreationView({
     try {
       const response = await generateClass(sessionId, concept);
       setGeneratedClass(response.class_definition);
+      // A fresh class invalidates any previously accepted one.
+      setAcceptedClass(null);
     } catch (err) {
       setClassError(toMessage(err));
     } finally {
@@ -223,13 +270,20 @@ export default function CharacterCreationView({
       return;
     }
     const accepted = refinedProse;
-    setValues((prev) => ({
-      ...prev,
+    const next: Record<StepKey, string> = {
+      ...values,
       backstory: accepted.backstory,
       personality: accepted.personality,
       appearance: accepted.appearance,
       motivation: accepted.motivation,
-    }));
+    };
+    setValues(next);
+    setDraft(next);
+    try {
+      saveCharDraft(next);
+    } catch {
+      // Draft is convenience data; ignore private-mode/storage failures.
+    }
     setRefinedProse(null);
     setRefineNote(null);
     setRefineError(null);
@@ -305,7 +359,7 @@ export default function CharacterCreationView({
 
   const handleFreeSubmit = (event: FormEvent) => {
     event.preventDefault();
-    if (busy || description.trim() === "") {
+    if (busy || description.trim().length < 20) {
       return;
     }
     void submitFree();
@@ -316,6 +370,16 @@ export default function CharacterCreationView({
       <h2>Forge Your Hero</h2>
       {!freeMode ? (
         <>
+          {hasDraft && (
+            <button
+              type="button"
+              className="char-fill-btn"
+              onClick={handleFillDraft}
+              disabled={busy}
+            >
+              Fill with last values
+            </button>
+          )}
           <p className="muted">{step.hint}</p>
           <form onSubmit={handleWizardSubmit}>
             <label htmlFor={`character-${step.key}`}>{step.title}</label>
@@ -325,6 +389,7 @@ export default function CharacterCreationView({
                 value={values[step.key]}
                 onChange={(event) => handleValueChange(event.target.value)}
                 placeholder={step.placeholder}
+                maxLength={2000}
                 disabled={busy}
               />
             ) : (
@@ -333,9 +398,14 @@ export default function CharacterCreationView({
                 value={values[step.key]}
                 onChange={(event) => handleValueChange(event.target.value)}
                 placeholder={step.placeholder}
+                maxLength={step.key === "name" ? 100 : undefined}
                 disabled={busy}
               />
             )}
+            {values[step.key].trim() === "" &&
+              draft[step.key]?.trim() !== "" && (
+                <span className="char-last-hint">last: {draft[step.key]}</span>
+              )}
             {step.key === "class_concept" && (
               <>
                 <button
@@ -467,9 +537,14 @@ export default function CharacterCreationView({
               value={description}
               onChange={(event) => setDescription(event.target.value)}
               placeholder="A scarred half-orc ranger hunting the wyrm that burned her village..."
+              maxLength={2000}
+              minLength={20}
               disabled={busy}
             />
-            <button type="submit" disabled={busy || description.trim() === ""}>
+            <button
+              type="submit"
+              disabled={busy || description.trim().length < 20}
+            >
               {busy ? "Weaving fate..." : "Forge Character"}
             </button>
           </form>
