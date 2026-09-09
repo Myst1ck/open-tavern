@@ -66,6 +66,7 @@ def generate_character(
     class_name: str = "",
     class_hit_die: int | None = None,
     class_description: str = "",
+    premise: str | None = None,
 ) -> tuple[CharacterSheet, str, str]:
     """Generate a validated, normalized :class:`CharacterSheet`.
 
@@ -102,9 +103,10 @@ def generate_character(
             appearance=appearance,
             motivation=motivation,
             description=description,
+            premise=premise,
         )
     else:
-        prompt = character_gen_prompt(description)
+        prompt = character_gen_prompt(description, premise=premise)
     text = client.chat([{"role": "user", "content": prompt}], json_mode=True)
     data = _parse_json(text)
     _apply_class_override(data, class_name, class_hit_die, class_description)
@@ -191,10 +193,13 @@ def _class_definition_from(raw: object, fallback_name: str) -> ClassDefinition:
     if not isinstance(description, str):
         description = ""
     hit_die = raw.get("hit_die")
-    try:
-        hit_die = int(hit_die)
-    except (TypeError, ValueError):
+    if hit_die is None:
         hit_die = 8
+    else:
+        try:
+            hit_die = int(hit_die)
+        except (TypeError, ValueError):
+            hit_die = 8
     if hit_die not in HIT_DIE_SIZES:
         hit_die = 8
     return ClassDefinition(name=name, description=description, hit_die=hit_die)

@@ -22,6 +22,8 @@ from open_tavern.api.ratelimit import RateLimiter
 from open_tavern.api.schemas import (
     ActionRequest,
     ActionResponse,
+    BrainstormRequest,
+    BrainstormResponse,
     CharacterRequest,
     CharacterResponse,
     ClassRequest,
@@ -53,7 +55,9 @@ from open_tavern.story import (
     generate_class,
     turn,
 )
+from open_tavern.story.character_gen import _parse_json
 from open_tavern.story.client import LLMClientError
+from open_tavern.story.prompts import brainstorm_prompt
 from open_tavern.story.refine import refine_prose
 
 
@@ -157,32 +161,40 @@ _action_limiter = RateLimiter(max_requests=10, window_seconds=60.0)
 _character_limiter = RateLimiter(max_requests=5, window_seconds=60.0)
 #: Limits for unauthenticated lifecycle endpoints (resource exhaustion guard).
 _create_limiter = RateLimiter(max_requests=30, window_seconds=60.0)
+_brainstorm_limiter = RateLimiter(max_requests=30, window_seconds=60.0)
 _delete_limiter = RateLimiter(max_requests=10, window_seconds=60.0)
 #: Limits for item CRUD operations.
 _item_limiter = RateLimiter(max_requests=30, window_seconds=60.0)
 
 #: Per-session locks serialize read-modify-write of a single session's state so
 #: concurrent actions cannot lose updates. Keyed by session id.
-_SESSION_LOCKS: dict[str, threading.Lock] = {}
+#: Entries use ``(lock, refcount)`` tuples — the lock is only deleted when no
+#: thread is waiting or holding it (refcount == 0), preventing the
+#: replacement-race where a new lock is created while a waiter still holds
+#: the old one.
+_SESSION_LOCKS: dict[str, tuple[threading.Lock, int]] = {}
 _SESSION_LOCKS_GUARD = threading.Lock()
 
 
 def _session_lock(session_id: str) -> threading.Lock:
-    """Return the per-session lock for ``session_id``, creating it if needed."""
+    """Return the per-session lock for ``session_id``, incrementing the refcount."""
     with _SESSION_LOCKS_GUARD:
-        lock = _SESSION_LOCKS.get(session_id)
-        if lock is None:
+        entry = _SESSION_LOCKS.get(session_id)
+        if entry is None:
             lock = threading.Lock()
-            _SESSION_LOCKS[session_id] = lock
+            _SESSION_LOCKS[session_id] = (lock, 1)
+            return lock
+        lock, refcount = entry
+        _SESSION_LOCKS[session_id] = (lock, refcount + 1)
         return lock
 
 
 @contextmanager
 def _session_lock_ctx(session_id: str):
-    """Acquire the per-session lock and release the dict entry afterwards.
+    """Acquire the per-session lock and decrement the refcount on exit.
 
-    The lock mapping is removed on exit (only when still the same object) so
-    ``_SESSION_LOCKS`` cannot accumulate entries for dead sessions.
+    The lock mapping is only removed when the refcount drops to zero, so
+    a thread still queued on the lock will not see its lock replaced.
     """
     lock = _session_lock(session_id)
     try:
@@ -190,8 +202,14 @@ def _session_lock_ctx(session_id: str):
             yield
     finally:
         with _SESSION_LOCKS_GUARD:
-            if _SESSION_LOCKS.get(session_id) is lock:
-                del _SESSION_LOCKS[session_id]
+            entry = _SESSION_LOCKS.get(session_id)
+            if entry is not None:
+                lock_obj, refcount = entry
+                if lock_obj is lock:
+                    if refcount <= 1:
+                        _SESSION_LOCKS.pop(session_id, None)
+                    else:
+                        _SESSION_LOCKS[session_id] = (lock, refcount - 1)
 
 
 def _enforce_rate_limit(request: Request, limiter: RateLimiter, scope: str) -> None:
@@ -278,10 +296,13 @@ def create_session(
 ) -> CreateSessionResponse:
     """Create a new game session and persist it."""
     _enforce_rate_limit(request, _create_limiter, "create")
-    session_id = storage.create_session(body.world_theme, body.title)
+    session_id = storage.create_session(
+        body.world_theme, body.title, premise=body.premise
+    )
     return CreateSessionResponse(
         session_id=session_id,
         world_theme=body.world_theme,
+        premise=body.premise,
     )
 
 
@@ -305,9 +326,11 @@ def create_character(
     """
     _ensure_session(storage, session_id)
     _enforce_rate_limit(request, _character_limiter, "character")
+    session_meta = storage.load_session(session_id)
+    premise = session_meta.get("premise") if session_meta else None
     try:
         sheet, opening, scene = generate_character(
-            body.description,
+            body.description or "",
             client,
             name=body.name or "",
             race=body.race or "",
@@ -319,6 +342,7 @@ def create_character(
             class_name=body.class_name or "",
             class_hit_die=body.class_hit_die,
             class_description=body.class_description or "",
+            premise=premise,
         )
     except CharacterGenerationError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -360,6 +384,38 @@ def create_class_preview(
             "hit_die": definition.hit_die,
         }
     )
+
+
+@router.post(
+    "/brainstorm",
+    response_model=BrainstormResponse,
+)
+def brainstorm(
+    body: BrainstormRequest,
+    request: Request,
+    client: ChatClient = Depends(get_per_request_client),
+) -> BrainstormResponse:
+    """Distill a pre-game brainstorm chat into theme + premise (stateless).
+
+    Prepend the brainstorm system prompt to the conversation, ask the LLM for
+    a JSON ``{"theme", "premise"}`` object, and parse it. Nothing is persisted;
+    any LLM or parse failure surfaces as 502.
+    """
+    _enforce_rate_limit(request, _brainstorm_limiter, "brainstorm")
+    messages = [{"role": "system", "content": brainstorm_prompt()}, *body.messages]
+    try:
+        data = _parse_json(client.chat(messages, temperature=0.8))
+    except (LLMClientError, CharacterGenerationError) as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=502, detail="LLM response was not valid JSON")
+    theme = data.get("theme")
+    premise = data.get("premise")
+    if not isinstance(theme, str) or not isinstance(premise, str):
+        raise HTTPException(
+            status_code=502, detail="LLM response missing theme or premise"
+        )
+    return BrainstormResponse(theme=theme.strip(), premise=premise.strip())
 
 
 @router.post(
@@ -428,9 +484,11 @@ def send_action(
         character = _require_character(storage, session_id)
         state = _current_state(storage, session_id, character)
         history = storage.load_messages(session_id)
+        session_meta = storage.load_session(session_id)
+        premise = session_meta.get("premise") if session_meta else None
 
         try:
-            result = turn(body.action, state, history, client)
+            result = turn(body.action, state, history, client, premise=premise)
         except LLMClientError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 

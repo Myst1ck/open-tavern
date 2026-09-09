@@ -3,7 +3,7 @@
 # Technical Domain
 
 **Purpose**: Tech stack, architecture, and development patterns for Open Tavern.
-**Last Updated**: 2026-08-28
+**Last Updated**: 2026-09-07
 
 ## Quick Reference
 **Update Triggers**: Tech stack changes | New patterns | Architecture decisions
@@ -19,6 +19,7 @@
 | Language (BE) | Python                  | 3.13               | required                        |
 | Database      | SQLite (stdlib sqlite3) | —                  | zero-dep MVP                    |
 | Styling       | plain CSS               | —                  | single styles.css, no framework |
+| Container     | Podman                  | rootless           | no sudo required                |
 
 ## Architecture
 - Two processes: FastAPI backend (:8000) + Vite frontend (:5173).

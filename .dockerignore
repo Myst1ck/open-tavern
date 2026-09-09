@@ -1,0 +1,38 @@
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.ruff_cache
+dist
+*.egg-info
+
+# Node
+node_modules
+frontend/dist
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Documentation
+*.md
+LICENSE
+
+# OS
+.DS_Store
+Thumbs.db

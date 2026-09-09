@@ -84,6 +84,9 @@ export interface ChatMessage {
   content: string;
 }
 
+/** Alias for chat-message payloads sent to the backend. */
+export type Message = ChatMessage;
+
 export interface SessionDetail {
   meta: SessionSummary;
   state: GameState | null;
@@ -242,12 +245,14 @@ async function errorDetail(response: Response): Promise<string> {
 export function createSession(
   worldTheme: string,
   title?: string,
+  premise?: string,
 ): Promise<Session> {
   return request<Session>("/sessions", {
     method: "POST",
     body: JSON.stringify({
       world_theme: worldTheme,
       ...(title !== undefined ? { title } : {}),
+      ...(premise !== undefined ? { premise } : {}),
     }),
   });
 }
@@ -388,6 +393,25 @@ export function getState(sessionId: string): Promise<StateResponse> {
   return request<StateResponse>(`/sessions/${sessionId}/state`);
 }
 
+// ── Brainstorm API types ────────────────────────────────────────
+
+export interface BrainstormResponse {
+  theme: string;
+  premise: string;
+}
+
+// ── Brainstorm API functions ────────────────────────────────────
+
+/**
+ * Generate a conversational theme + premise from a chat transcript.
+ */
+export function brainstorm(messages: Message[]): Promise<BrainstormResponse> {
+  return request<BrainstormResponse>("/brainstorm", {
+    method: "POST",
+    body: JSON.stringify({ messages }),
+  });
+}
+
 // ── Item API types ──────────────────────────────────────────────
 
 export type ItemResponse = Item;
@@ -416,8 +440,8 @@ export function createItem(
   sessionId: string,
   characterId: string,
   data: CreateItemRequest,
-): Promise<ItemResponse> {
-  return request<ItemResponse>(
+): Promise<ItemActionResponse> {
+  return request<ItemActionResponse>(
     `/sessions/${sessionId}/characters/${characterId}/items`,
     { method: "POST", body: JSON.stringify(data) },
   );

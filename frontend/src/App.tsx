@@ -1,10 +1,4 @@
-import {
-  type FormEvent,
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   type CharacterSheet,
@@ -27,6 +21,7 @@ import {
   unequipItem,
   useItem as callUseItem,
 } from "./api";
+import BrainstormView from "./components/BrainstormView";
 import CharacterCreationView from "./components/CharacterCreationView";
 import CharacterSheetView from "./components/CharacterSheet";
 import Chat, { type Message } from "./components/Chat";
@@ -187,11 +182,11 @@ export default function App() {
     setSettings(next);
   };
 
-  const handleStart = async (worldTheme: string) => {
+  const handleStart = async (worldTheme: string, premise: string) => {
     setBusy(true);
     setError(null);
     try {
-      const created = await createSession(worldTheme);
+      const created = await createSession(worldTheme, undefined, premise);
       setSession(created);
       setPhase("character");
     } catch (err) {
@@ -336,7 +331,7 @@ export default function App() {
         {phase === "start" && (
           <>
             <SettingsPanel initial={settings} onSave={handleSaveSettings} />
-            <StartView busy={busy} error={error} onStart={handleStart} />
+            <BrainstormView onBegin={handleStart} />
             <SavedTalesList
               sessions={sessions}
               busy={sessionsBusy}
@@ -411,40 +406,5 @@ export default function App() {
         )}
       </main>
     </div>
-  );
-}
-
-interface StartViewProps {
-  busy: boolean;
-  error: string | null;
-  onStart: (worldTheme: string) => void;
-}
-
-function StartView({ busy, error, onStart }: StartViewProps) {
-  const [theme, setTheme] = useState("fantasy");
-
-  const handleSubmit = (event: FormEvent) => {
-    event.preventDefault();
-    onStart(theme.trim() || "fantasy");
-  };
-
-  return (
-    <section className="panel start-panel">
-      <h2>Begin a New Tale</h2>
-      <p className="muted">Name the world and the tavern door will open.</p>
-      <form onSubmit={handleSubmit}>
-        <label htmlFor="world-theme">World theme</label>
-        <input
-          id="world-theme"
-          value={theme}
-          onChange={(event) => setTheme(event.target.value)}
-          disabled={busy}
-        />
-        <button type="submit" disabled={busy}>
-          {busy ? "Opening..." : "Begin"}
-        </button>
-      </form>
-      {error !== null && <p className="error">{error}</p>}
-    </section>
   );
 }
