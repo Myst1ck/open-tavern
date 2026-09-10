@@ -18,11 +18,29 @@ from open_tavern.state import GameState
 from open_tavern.story import RollOutcome
 
 
+class BrainstormRequest(BaseModel):
+    """Request body for the stateless brainstorm chat.
+
+    ``messages`` is the conversation so far, each item
+    ``{"role": "user" | "assistant", "content": "..."}``. Nothing is persisted.
+    """
+
+    messages: list[dict[str, str]]
+
+
+class BrainstormResponse(BaseModel):
+    """Response carrying a campaign theme and premise distilled from the chat."""
+
+    theme: str
+    premise: str
+
+
 class CreateSessionRequest(BaseModel):
     """Request body for creating a new game session."""
 
     world_theme: str = Field(max_length=200)
     title: str | None = Field(default=None, max_length=200)
+    premise: str | None = None
 
 
 class CreateSessionResponse(BaseModel):
@@ -30,6 +48,7 @@ class CreateSessionResponse(BaseModel):
 
     session_id: str
     world_theme: str
+    premise: str | None = None
 
 
 class CharacterRequest(BaseModel):

@@ -84,13 +84,14 @@ def turn(
     history: list[dict[str, str]],
     client,
     rng: random.Random | None = None,
+    premise: str | None = None,
 ) -> TurnResult:
     """Process one player ``action`` against ``state`` and return a result.
 
     ``history`` is a read-only list of ``{"role", "content"}`` messages. The
     caller appends the player action and final narration after this returns.
     """
-    system = _build_system_prompt(state)
+    system = _build_system_prompt(state, premise=premise)
     messages: list[dict[str, str]] = [
         {"role": "system", "content": system},
         *_recent_history(history, _MAX_HISTORY_MESSAGES),
@@ -130,10 +131,10 @@ def turn(
     )
 
 
-def _build_system_prompt(state: GameState) -> str:
+def _build_system_prompt(state: GameState, premise: str | None = None) -> str:
     """Build the GM system prompt, reflecting the live hit-point total."""
     live_character = replace(state.character, hp=state.current_hp)
-    return gm_system_prompt(live_character, DEFAULT_WORLD_THEME)
+    return gm_system_prompt(live_character, DEFAULT_WORLD_THEME, premise=premise)
 
 
 def _apply_actions(

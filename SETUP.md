@@ -1,6 +1,6 @@
 # Open Tavern — SETUP / Bring-Up Playbook
 
-Authoritative bring-up doc. Fresh machine → follow this. Generated 2026-08-28 by `/up`. Refreshed 2026-09-01 by `/up` — verified bring-up, all endpoints 200.
+Authoritative bring-up doc. Fresh machine → follow this. Generated 2026-08-28 by `/up`. Refreshed 2026-09-08 by `/up` — verified bring-up, all endpoints 200.
 
 ## Architecture
 
@@ -11,7 +11,7 @@ Authoritative bring-up doc. Fresh machine → follow this. Generated 2026-08-28 
 | Storage  | SQLite (stdlib `sqlite3`)         | —    | File `backend/open_tavern.db`  |
 | AI       | OpenAI-compatible chat client     | —    | BYO key, see env vars          |
 
-No Docker. No separate DB/cache/queue services. Two processes total.
+Docker/Podman available. No separate DB/cache/queue services. Two containers total.
 
 ## Services
 
@@ -35,6 +35,7 @@ Note: no root `/` API route — `/` on :8000 returns 404 by design. Use `/sessio
 | `OPENAI_BASE_URL`  | `https://api.openai.com/v1`| no       | Provider base URL                  |
 | `OPENAI_MODEL`     | `gpt-4o-mini`              | no       | Model to call                      |
 | `OPEN_TAVERN_DB`   | `open_tavern.db`           | no       | SQLite file path (relative to cwd) |
+| `OPEN_TAVERN_ALLOWED_ORIGINS` | `http://localhost:3000` | no       | Comma-separated CORS origins. Add `http://<tailscale-ip>:5173`, `http://<lan-ip>:5173`, or `http://brain:5173` for remote browser access. |
 
 ### Frontend (`.env` file, `frontend/.env`, copy of `frontend/.env.example`)
 
@@ -72,6 +73,70 @@ cd frontend
 npm run dev -- --host 0.0.0.0 --port 5173
 ```
 
+## Docker / Podman
+
+> Uses Podman (not Docker). `podman-compose` required.
+> ⚠️ Use `podman-compose` (Python package), NOT `podman compose` (delegates to docker-compose, broken socket). If containers fail with no clear error, check you're running the right command.
+
+### Quick start
+
+```bash
+podman-compose up --build
+```
+
+Builds images from `backend/Dockerfile` and `frontend/Dockerfile`, starts both containers.
+
+### Build images only
+
+```bash
+podman-compose build
+```
+
+### Run in background
+
+```bash
+podman-compose up --build -d
+```
+
+### Stop containers
+
+```bash
+podman-compose down
+```
+
+### View logs
+
+```bash
+podman-compose logs -f backend   # follow backend logs
+podman-compose logs -f frontend  # follow frontend logs
+podman-compose logs              # all services
+```
+
+### Persistent data (SQLite)
+
+SQLite DB lives in the `backend-data` volume (`docker-compose.yml` line 13). Data survives container restarts and rebuilds.
+
+- Volume: `backend-data` → mounted at `/data` inside backend container
+- DB path inside container: `/data/open_tavern.db`
+- `OPEN_TAVERN_DB` env var set to `/data/open_tavern.db` (line 10)
+
+To inspect the DB from the host:
+
+```bash
+podman volume inspect open-tavern_backend-data
+# copy DB out if needed:
+podman cp $(podman-compose ps -q backend):/data/open_tavern.db ./open_tavern.db
+```
+
+### Files referenced
+
+| File | Purpose |
+|------|---------|
+| `backend/Dockerfile` | Python 3.13-slim, installs deps, runs uvicorn on `0.0.0.0:8000` |
+| `frontend/Dockerfile` | Node 20-slim, installs npm deps, runs Vite dev on `0.0.0.0:5173` |
+| `docker-compose.yml` | Defines `backend` + `frontend` services, `backend-data` volume, port mappings |
+| `.dockerignore` | Excludes `.git`, `node_modules`, `.env`, `*.md`, Dockerfiles from build context |
+
 ## Remote Access (LAN / Tailscale)
 
 Frontend derives backend URL from the browser's own host: `http://<browser-host>:8000` (`frontend/src/api.ts`). No `VITE_API_BASE_URL` override needed — browser loads `<host-ip>:5173`, frontend calls `<host-ip>:8000` automatically.
@@ -80,9 +145,10 @@ Required for remote access:
 1. Backend MUST bind `0.0.0.0` — default uvicorn is `127.0.0.1` (use `--host 0.0.0.0`).
 2. Frontend MUST bind `0.0.0.0` (`--host 0.0.0.0`).
 3. Firewall open on ports 8000 + 5173 (see below).
+4. CORS: backend only allows `localhost:3000` by default. For remote browser access, set `OPEN_TAVERN_ALLOWED_ORIGINS` to include the origin URL. Example for Tailscale: `OPEN_TAVERN_ALLOWED_ORIGINS=http://localhost:5173,http://brain:5173`. Without this, browser API calls fail with CORS error.
 
 Symptom: `failed to fetch` in browser on character create or any API call.
-Cause: backend unreachable at `<host-ip>:8000` — usually loopback bind (started without `--host 0.0.0.0`), wrong port, or firewall block.
+Cause: backend unreachable at `<host-ip>:8000` (loopback bind, wrong port, firewall) OR CORS origin mismatch — browser origin not in `OPEN_TAVERN_ALLOWED_ORIGINS`.
 Verify from remote device: `curl http://<host-ip>:8000/sessions` → expect `200`.
 
 ## Health Check

@@ -64,7 +64,7 @@ def test_init_creates_tables(tmp_path):
     finally:
         conn.close()
 
-    assert {"sessions", "characters", "messages"} <= names
+    assert {"sessions", "characters", "messages", "items"} <= names
 
 
 def test_init_works_with_memory_db():
@@ -94,7 +94,7 @@ def test_migration_is_idempotent(tmp_path):
     finally:
         conn.close()
 
-    assert {"title", "updated_at", "state_json"} <= cols
+    assert {"title", "updated_at", "state_json", "premise"} <= cols
 
 
 def test_migration_deletes_legacy_unversioned_saves(tmp_path):
@@ -136,9 +136,9 @@ def test_migration_deletes_legacy_unversioned_saves(tmp_path):
         conn.close()
 
     # Legacy version-1 saves are DELETED, never preserved or migrated.
-    assert {"title", "updated_at", "state_json"} <= cols
+    assert {"title", "updated_at", "state_json", "premise"} <= cols
     assert rows == []
-    assert version is not None and version["value"] == "2"
+    assert version is not None and version["value"] == "4"
 
 
 def test_migration_deletes_versioned_mismatch_saves(tmp_path):
@@ -170,9 +170,35 @@ def test_migration_deletes_versioned_mismatch_saves(tmp_path):
     finally:
         conn.close()
 
-    # Versioned mismatch (1 != 2) also takes the destructive path.
+    # Versioned mismatch (1 != 4) also takes the destructive path.
     assert rows == []
-    assert version is not None and version["value"] == "2"
+    assert version is not None and version["value"] == "4"
+
+
+# --- premise ---------------------------------------------------------------
+
+
+def test_create_session_with_premise(storage):
+    session_id = storage.create_session(
+        "gothic", premise="A vampire lord terrorizes the village."
+    )
+    loaded = storage.load_session(session_id)
+    assert loaded is not None
+    assert loaded["premise"] == "A vampire lord terrorizes the village."
+
+
+def test_create_session_premise_none_by_default(storage):
+    session_id = storage.create_session("gothic")
+    loaded = storage.load_session(session_id)
+    assert loaded is not None
+    assert loaded["premise"] is None
+
+
+def test_create_session_premise_empty_string(storage):
+    session_id = storage.create_session("gothic", premise="")
+    loaded = storage.load_session(session_id)
+    assert loaded is not None
+    assert loaded["premise"] == ""
 
 
 # --- sessions ------------------------------------------------------------
@@ -394,7 +420,7 @@ def test_load_session_unknown_id_returns_none(storage):
 
 
 def test_load_session_returns_full_state(storage):
-    session_id = storage.create_session("space opera")
+    session_id = storage.create_session("space opera", premise="Deep space mystery")
     sheet = _make_character()
     storage.save_character(session_id, sheet)
     storage.append_message(session_id, "user", "hello")
@@ -402,6 +428,7 @@ def test_load_session_returns_full_state(storage):
     loaded = storage.load_session(session_id)
     assert loaded is not None
     assert loaded["world_theme"] == "space opera"
+    assert loaded["premise"] == "Deep space mystery"
     assert loaded["character"] == sheet
     assert loaded["messages"] == [{"role": "user", "content": "hello"}]
 

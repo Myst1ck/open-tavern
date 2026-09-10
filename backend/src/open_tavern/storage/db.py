@@ -29,7 +29,7 @@ from open_tavern.state import GameState, state_from_persistable, state_to_persis
 #:     are deleted, never preserved, backfilled, or migrated.
 #:   * 2 — this change: adds the ``meta`` table with a ``schema_version`` row
 #:     so incompatible layouts are detected and dropped/recreated.
-SCHEMA_VERSION: int = 3
+SCHEMA_VERSION: int = 4
 
 #: ``meta`` row key holding the schema version written by :meth:`Storage.init`.
 _SCHEMA_VERSION_KEY: str = "schema_version"
@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
     created_at TEXT NOT NULL,
     world_theme TEXT NOT NULL,
+    premise TEXT,
     title TEXT,
     updated_at TEXT,
     state_json TEXT
@@ -233,19 +234,26 @@ class Storage:
     def __exit__(self, *exc: object) -> None:
         self.close()
 
-    def create_session(self, world_theme: str, title: str | None = None) -> str:
+    def create_session(
+        self,
+        world_theme: str,
+        title: str | None = None,
+        premise: str | None = None,
+    ) -> str:
         """Persist a new session and return its unique id.
 
         ``title`` defaults to ``world_theme`` when omitted or empty.
+        ``premise`` is an optional LLM-generated story premise from the
+        conversational theme brainstorm.
         """
         session_id = uuid4().hex
         now = _now_iso()
         with self._lock, self._conn:
             self._conn.execute(
                 "INSERT INTO sessions "
-                "(id, created_at, world_theme, title, updated_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (session_id, now, world_theme, title or world_theme, now),
+                "(id, created_at, world_theme, premise, title, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (session_id, now, world_theme, premise, title or world_theme, now),
             )
         return session_id
 
@@ -429,13 +437,14 @@ class Storage:
         """Return full session state, or ``None`` if the session is unknown."""
         with self._lock:
             row = self._conn.execute(
-                "SELECT world_theme FROM sessions WHERE id = ?",
+                "SELECT world_theme, premise FROM sessions WHERE id = ?",
                 (session_id,),
             ).fetchone()
             if row is None:
                 return None
             return {
                 "world_theme": row["world_theme"],
+                "premise": row["premise"],
                 "character": self.load_character(session_id),
                 "messages": self.load_messages(session_id),
             }

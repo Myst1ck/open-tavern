@@ -1,0 +1,23 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+      - OPEN_TAVERN_DB=/data/open_tavern.db
+      - OPEN_TAVERN_ALLOWED_ORIGINS=${OPEN_TAVERN_ALLOWED_ORIGINS:-http://localhost:5173,http://brain:5173}
+    volumes:
+      - backend-data:/data
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+
+volumes:
+  backend-data:
