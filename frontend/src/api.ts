@@ -14,13 +14,23 @@ const API_BASE_URL = (
 
 const SETTINGS_KEY = "open-tavern-settings";
 
+/** Abort in-flight fetches after this long to avoid hanging requests. */
+const REQUEST_TIMEOUT_MS = 30_000;
+
 export interface TavernSettings {
   apiKey: string;
   baseUrl: string;
   model: string;
 }
 
-/** Read settings from localStorage, tolerating missing/corrupt values. */
+/**
+ * Read settings from localStorage, tolerating missing/corrupt values.
+ *
+ * SECURITY NOTE: the API key is persisted in plaintext in localStorage.
+ * Any script running on this origin (or an XSS payload) can read it, and it
+ * survives in the browser profile after logout. SettingsPanel should warn
+ * users of this exposure; do not treat the stored key as a secret at rest.
+ */
 export function loadSettings(): TavernSettings {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
@@ -214,20 +224,27 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...settingsHeaders(cachedSettings),
-    },
-  });
-  if (!response.ok) {
-    throw new ApiError(response.status, await errorDetail(response));
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      ...init,
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        ...settingsHeaders(cachedSettings),
+      },
+    });
+    if (!response.ok) {
+      throw new ApiError(response.status, await errorDetail(response));
+    }
+    if (response.status === 204) {
+      return undefined as T;
+    }
+    return (await response.json()) as T;
+  } finally {
+    clearTimeout(timer);
   }
-  if (response.status === 204) {
-    return undefined as T;
-  }
-  return (await response.json()) as T;
 }
 
 async function errorDetail(response: Response): Promise<string> {

@@ -18,10 +18,13 @@ from open_tavern.api.routes import (
     _STATE_CACHE,
     build_client_from_headers,
     get_client,
+    get_per_request_client,
     get_storage,
 )
+from open_tavern.character.items import BaseType, Item
 from open_tavern.state import GameState, new_state
 from open_tavern.storage import Storage
+from open_tavern.story import OpenAIClient
 
 
 class FakeClient:
@@ -44,7 +47,10 @@ def _valid_sheet_raw() -> dict:
         "level": 2,
         "abilities": {"STR": 8, "DEX": 17, "CON": 12, "INT": 14, "WIS": 13, "CHA": 10},
         "skills": {"Stealth": True},
-        "inventory": ["dagger", "lockpicks"],
+        "inventory": [
+            {"name": "dagger", "type": "weapon"},
+            {"name": "lockpicks", "type": "loot"},
+        ],
         "backstory": "An orphaned elf.",
     }
 
@@ -261,7 +267,6 @@ def test_get_state_loads_persisted_state_after_cache_cleared(storage):
     persisted = GameState(
         current_hp=5,
         max_hp=new_state(character).max_hp,
-        inventory=("potion",),
         conditions=frozenset({"poisoned"}),
         scene="a dark cave",
         character=character,
@@ -276,7 +281,11 @@ def test_get_state_loads_persisted_state_after_cache_cleared(storage):
     assert state["current_hp"] == 5
     assert state["scene"] == "a dark cave"
     assert state["conditions"] == ["poisoned"]
-    assert state["inventory"] == ["potion"]
+    # Inventory lives on the character projection, not the state envelope.
+    assert [item["name"] for item in state["character"]["inventory"]] == [
+        "dagger",
+        "lockpicks",
+    ]
 
 
 # --- character -----------------------------------------------------------
@@ -349,42 +358,15 @@ def test_get_state_returns_current_state(storage):
     assert state["current_hp"] == state["max_hp"]
 
 
-# --- error handling ------------------------------------------------------
-
-
-# --- per-request header client -------------------------------------------
-
-
-def test_build_client_from_headers_routes_values(monkeypatch):
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
-    monkeypatch.delenv("OPENAI_MODEL", raising=False)
-
-    client = build_client_from_headers(
-        api_key="sk-test",
-        base_url="http://localhost:11434/v1",
-        model="llama3",
-    )
-
-    assert client.api_key == "sk-test"
-    assert client.base_url == "http://localhost:11434/v1"
-    assert client.model == "llama3"
-
-
 def test_build_client_from_headers_partial_falls_back_to_env(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     monkeypatch.delenv("OPENAI_MODEL", raising=False)
 
-    client = build_client_from_headers(
-        api_key="sk-test",
-        base_url=None,
-        model="",
-    )
+    client = build_client_from_headers(api_key="sk-test", model="")
 
     assert client.api_key == "sk-test"
-    # No base URL / model supplied: fall back to OpenAIClient defaults.
-    assert client.base_url == "https://api.openai.com/v1"
+    # No model supplied: fall back to OpenAIClient defaults.
     assert client.model == "gpt-4o-mini"
 
 
@@ -393,11 +375,39 @@ def test_build_client_from_headers_empty_values_overridden_by_env(monkeypatch):
     monkeypatch.setenv("OPENAI_BASE_URL", "http://env:8000/v1")
     monkeypatch.setenv("OPENAI_MODEL", "env-model")
 
-    client = build_client_from_headers(api_key=None, base_url="", model=None)
+    client = build_client_from_headers(api_key=None, model=None)
 
     assert client.api_key == "env-key"
     assert client.base_url == "http://env:8000/v1"
     assert client.model == "env-model"
+
+
+def test_get_per_request_client_ignores_base_url_header(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "env-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://env:8000/v1")
+    monkeypatch.setenv("OPENAI_MODEL", "env-model")
+
+    client = get_per_request_client(x_api_key="sk-test", x_model="llama3")
+
+    assert isinstance(client, OpenAIClient)
+    assert client.api_key == "sk-test"
+    assert client.model == "llama3"
+    # X-Base-URL is not a recognized header: env base URL is used.
+    assert client.base_url == "http://env:8000/v1"
+
+
+def test_x_base_url_header_ignored_by_endpoint(storage):
+    fake = FakeClient(['{"theme": "gothic", "premise": "a haunted tavern"}'])
+    client = _make_client(storage, fake)
+
+    resp = client.post(
+        "/brainstorm",
+        json={"messages": [{"role": "user", "content": "hi"}]},
+        headers={"X-Base-URL": "http://169.254.169.254/v1"},
+    )
+
+    assert resp.status_code == 200
+    assert fake.calls  # env fake client used; header did not build a real client
 
 
 def test_unknown_session_returns_404(storage):
@@ -617,3 +627,327 @@ def test_create_character_without_opening_appends_no_message(storage):
     assert resp.status_code == 200
     assert resp.json()["opening"] == ""
     assert storage.load_messages(session_id) == []
+
+
+# --- items ---------------------------------------------------------------
+
+
+def _session_with_character(client: TestClient, storage: Storage) -> str:
+    session_id = storage.create_session("gothic")
+    resp = client.post(
+        f"/sessions/{session_id}/character", json={"description": "elf"}
+    )
+    assert resp.status_code == 200
+    return session_id
+
+
+def _item_url(session_id: str, item_id: str | None = None) -> str:
+    base = f"/sessions/{session_id}/characters/{session_id}/items"
+    return base if item_id is None else f"{base}/{item_id}"
+
+
+def test_create_item_creates_and_persists(storage):
+    client = _make_client(storage, FakeClient([json.dumps(_valid_sheet_raw())]))
+    session_id = _session_with_character(client, storage)
+
+    resp = client.post(
+        _item_url(session_id),
+        json={"name": "Iron Sword", "type": "weapon", "stats": {"damage": 5}},
+    )
+
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["success"] is True
+    assert data["item"]["name"] == "Iron Sword"
+    assert data["item"]["type"] == "weapon"
+    assert data["item"]["stats"]["damage"] == 5
+    assert data["message"] == "Item 'Iron Sword' created"
+
+    items = storage.load_items(session_id, session_id)
+    assert len(items) == 1
+    assert items[0].name == "Iron Sword"
+
+
+def test_create_item_defaults_type_to_loot(storage):
+    client = _make_client(storage, FakeClient([json.dumps(_valid_sheet_raw())]))
+    session_id = _session_with_character(client, storage)
+
+    resp = client.post(_item_url(session_id), json={"name": "Trinket"})
+
+    assert resp.status_code == 201
+    assert resp.json()["item"]["type"] == "loot"
+
+
+def test_create_item_invalid_type_422(storage):
+    client = _make_client(storage, FakeClient([json.dumps(_valid_sheet_raw())]))
+    session_id = _session_with_character(client, storage)
+
+    resp = client.post(_item_url(session_id), json={"name": "X", "type": "artifact"})
+
+    assert resp.status_code == 422
+    assert "Invalid item type" in resp.json()["detail"]
+
+
+def test_create_item_missing_name_422(storage):
+    client = _make_client(storage, FakeClient([json.dumps(_valid_sheet_raw())]))
+    session_id = _session_with_character(client, storage)
+
+    resp = client.post(_item_url(session_id), json={"type": "weapon"})
+
+    assert resp.status_code == 422
+
+
+def test_create_item_unknown_session_404(storage):
+    client = _make_client(storage, FakeClient([]))
+
+    resp = client.post(
+        "/sessions/does-not-exist/characters/does-not-exist/items",
+        json={"name": "X"},
+    )
+
+    assert resp.status_code == 404
+
+
+def test_create_item_before_character_404(storage):
+    client = _make_client(storage, FakeClient([]))
+    session_id = storage.create_session("gothic")
+
+    resp = client.post(_item_url(session_id), json={"name": "X"})
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "character not found"
+
+
+def test_create_item_rate_limited(storage, monkeypatch):
+    monkeypatch.setattr(routes_module, "_item_limiter", RateLimiter(3, 60.0))
+    client = _make_client(storage, FakeClient([json.dumps(_valid_sheet_raw())]))
+    session_id = _session_with_character(client, storage)
+
+    for _ in range(3):
+        resp = client.post(_item_url(session_id), json={"name": "X"})
+        assert resp.status_code == 201
+
+    resp = client.post(_item_url(session_id), json={"name": "X"})
+    assert resp.status_code == 429
+
+
+def test_list_items(storage):
+    client = _make_client(storage, FakeClient([json.dumps(_valid_sheet_raw())]))
+    session_id = _session_with_character(client, storage)
+    client.post(_item_url(session_id), json={"name": "Sword", "type": "weapon"})
+    client.post(_item_url(session_id), json={"name": "Potion", "type": "consumable"})
+
+    resp = client.get(_item_url(session_id))
+
+    assert resp.status_code == 200
+    names = {item["name"] for item in resp.json()["items"]}
+    assert names == {"Sword", "Potion"}
+
+
+def test_get_item(storage):
+    client = _make_client(storage, FakeClient([json.dumps(_valid_sheet_raw())]))
+    session_id = _session_with_character(client, storage)
+    created = client.post(_item_url(session_id), json={"name": "Sword"}).json()
+    item_id = created["item"]["id"]
+
+    resp = client.get(_item_url(session_id, item_id))
+
+    assert resp.status_code == 200
+    assert resp.json()["name"] == "Sword"
+
+
+def test_get_item_unknown_404(storage):
+    client = _make_client(storage, FakeClient([json.dumps(_valid_sheet_raw())]))
+    session_id = _session_with_character(client, storage)
+
+    resp = client.get(_item_url(session_id, "nope"))
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "item not found"
+
+
+def test_delete_item(storage):
+    client = _make_client(storage, FakeClient([json.dumps(_valid_sheet_raw())]))
+    session_id = _session_with_character(client, storage)
+    item_id = client.post(_item_url(session_id), json={"name": "Sword"}).json()[
+        "item"
+    ]["id"]
+
+    resp = client.delete(_item_url(session_id, item_id))
+
+    assert resp.status_code == 200
+    assert resp.json()["success"] is True
+    assert storage.load_items(session_id, session_id) == []
+
+
+def test_delete_item_missing_returns_success_false(storage):
+    client = _make_client(storage, FakeClient([json.dumps(_valid_sheet_raw())]))
+    session_id = _session_with_character(client, storage)
+
+    resp = client.delete(_item_url(session_id, "nope"))
+
+    assert resp.status_code == 200
+    assert resp.json()["success"] is False
+    assert resp.json()["message"] == "item not found"
+
+
+def test_equip_item(storage):
+    client = _make_client(storage, FakeClient([json.dumps(_valid_sheet_raw())]))
+    session_id = _session_with_character(client, storage)
+    item_id = client.post(_item_url(session_id), json={"name": "Sword"}).json()[
+        "item"
+    ]["id"]
+
+    resp = client.post(_item_url(session_id, f"{item_id}/equip"))
+
+    assert resp.status_code == 200
+    assert resp.json()["success"] is True
+    assert resp.json()["item"]["equipped"] is True
+
+
+def test_unequip_item(storage):
+    client = _make_client(storage, FakeClient([json.dumps(_valid_sheet_raw())]))
+    session_id = _session_with_character(client, storage)
+    item_id = client.post(_item_url(session_id), json={"name": "Sword"}).json()[
+        "item"
+    ]["id"]
+    client.post(_item_url(session_id, f"{item_id}/equip"))
+
+    resp = client.post(_item_url(session_id, f"{item_id}/unequip"))
+
+    assert resp.status_code == 200
+    assert resp.json()["success"] is True
+    assert resp.json()["item"]["equipped"] is False
+
+
+def test_use_item_consumable_depletes(storage):
+    client = _make_client(storage, FakeClient([json.dumps(_valid_sheet_raw())]))
+    session_id = _session_with_character(client, storage)
+    item_id = client.post(
+        _item_url(session_id), json={"name": "Potion", "type": "consumable"}
+    ).json()["item"]["id"]
+
+    resp = client.post(_item_url(session_id, f"{item_id}/use"))
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["success"] is True
+    assert data["item"] is None
+    assert data["message"] == "Item 'Potion' used and depleted"
+    assert storage.load_items(session_id, session_id) == []
+
+
+def test_use_item_consumable_decrements_quantity(storage):
+    client = _make_client(storage, FakeClient([json.dumps(_valid_sheet_raw())]))
+    session_id = _session_with_character(client, storage)
+    potion = Item(name="Potion", type=BaseType.consumable, quantity=2)
+    storage.save_item(session_id, session_id, potion)
+
+    resp = client.post(_item_url(session_id, f"{potion.id}/use"))
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["success"] is True
+    assert data["item"]["quantity"] == 1
+    assert data["message"] == "Item 'Potion' used"
+    assert storage.load_items(session_id, session_id)[0].quantity == 1
+
+
+def test_use_item_non_consumable_fails(storage):
+    client = _make_client(storage, FakeClient([json.dumps(_valid_sheet_raw())]))
+    session_id = _session_with_character(client, storage)
+    item_id = client.post(
+        _item_url(session_id), json={"name": "Sword", "type": "weapon"}
+    ).json()["item"]["id"]
+
+    resp = client.post(_item_url(session_id, f"{item_id}/use"))
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["success"] is False
+    assert "is not consumable" in data["message"]
+
+
+def test_use_item_unknown_returns_success_false(storage):
+    client = _make_client(storage, FakeClient([json.dumps(_valid_sheet_raw())]))
+    session_id = _session_with_character(client, storage)
+
+    resp = client.post(_item_url(session_id, "nope/use"))
+
+    assert resp.status_code == 200
+    assert resp.json()["success"] is False
+    assert resp.json()["message"] == "item not found"
+
+
+# --- brainstorm ----------------------------------------------------------
+
+
+def test_brainstorm_returns_theme_and_premise(storage):
+    fake = FakeClient(['{"theme": "gothic", "premise": "a haunted tavern"}'])
+    client = _make_client(storage, fake)
+
+    resp = client.post(
+        "/brainstorm",
+        json={"messages": [{"role": "user", "content": "spooky tavern"}]},
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["theme"] == "gothic"
+    assert data["premise"] == "a haunted tavern"
+    assert fake.calls[0]["messages"][0]["role"] == "system"
+
+
+def test_brainstorm_strips_whitespace(storage):
+    fake = FakeClient(['{"theme": "  gothic  ", "premise": "  haunted  "}'])
+    client = _make_client(storage, fake)
+
+    resp = client.post(
+        "/brainstorm",
+        json={"messages": [{"role": "user", "content": "hi"}]},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["theme"] == "gothic"
+    assert resp.json()["premise"] == "haunted"
+
+
+def test_brainstorm_invalid_llm_json_502(storage):
+    client = _make_client(storage, FakeClient(["not json"]))
+
+    resp = client.post(
+        "/brainstorm",
+        json={"messages": [{"role": "user", "content": "hi"}]},
+    )
+
+    assert resp.status_code == 502
+
+
+def test_brainstorm_missing_fields_502(storage):
+    client = _make_client(storage, FakeClient(['{"theme": "gothic"}']))
+
+    resp = client.post(
+        "/brainstorm",
+        json={"messages": [{"role": "user", "content": "hi"}]},
+    )
+
+    assert resp.status_code == 502
+
+
+def test_brainstorm_rate_limited(storage, monkeypatch):
+    monkeypatch.setattr(routes_module, "_brainstorm_limiter", RateLimiter(3, 60.0))
+    fake = FakeClient(['{"theme": "gothic", "premise": "haunted"}'] * 3)
+    client = _make_client(storage, fake)
+
+    for _ in range(3):
+        resp = client.post(
+            "/brainstorm",
+            json={"messages": [{"role": "user", "content": "hi"}]},
+        )
+        assert resp.status_code == 200
+
+    resp = client.post(
+        "/brainstorm",
+        json={"messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert resp.status_code == 429

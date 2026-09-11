@@ -14,15 +14,46 @@ from open_tavern.character.models import (
     CharacterSheet,
 )
 
-#: Regex matching any ``<player_*>`` or ``</player_*>`` XML-like delimiter that
-#: fences untrusted input in prompts.  Stripped from user-supplied text before
-#: interpolation to prevent delimiter-escape prompt injection.
-_DELIMITER_RE = re.compile(r"</?player_\w+>", re.IGNORECASE)
+#: Regex matching any XML-like delimiter that fences untrusted input in
+#: prompts (``<player_*>``, ``<character_sheet>``, ``<character_description>``,
+#: ``<story_premise>``).  Stripped from user-supplied text before interpolation
+#: to prevent delimiter-escape prompt injection.
+_DELIMITER_RE = re.compile(
+    r"</?(?:player_\w+|character_sheet|character_description|story_premise)>",
+    re.IGNORECASE,
+)
+
+#: Regex matching instruction-override phrases (e.g. "ignore all rules",
+#: "ignore all previous instructions") that try to hijack the GM prompt.
+#: GM fields render as plain bullet lines, not fenced untrusted data, so such
+#: phrases are treated as hostile and the whole field is redacted.
+_INSTRUCTION_RE = re.compile(
+    r"\b(?:"
+    r"ignore all (?:previous |above |prior )?instructions?|"
+    r"ignore all rules|"
+    r"disregard (?:all )?(?:previous |above |prior )?instructions?|"
+    r"disregard all rules"
+    r")\b",
+    re.IGNORECASE,
+)
 
 
 def _sanitize(text: str) -> str:
     """Strip XML-like delimiter sequences from *text* to prevent prompt injection."""
     return _DELIMITER_RE.sub("", text)
+
+
+def _sanitize_gm(text: str) -> str:
+    """Sanitize a GM prompt field.
+
+    GM fields render as plain bullet lines inside the character-sheet fence,
+    not as individually fenced untrusted data, so injection text is more
+    dangerous here.  A field containing a delimiter tag or an
+    instruction-override phrase is treated as hostile and redacted wholesale.
+    """
+    if _DELIMITER_RE.search(text) or _INSTRUCTION_RE.search(text):
+        return "[redacted]"
+    return text
 
 
 def brainstorm_prompt() -> str:
@@ -56,7 +87,9 @@ def gm_system_prompt(
     if premise and premise.strip():
         premise_lines = [
             "STORY PREMISE:",
-            premise.strip(),
+            "<story_premise>",
+            _sanitize_gm(premise.strip()),
+            "</story_premise>",
             "",
         ]
     lines: list[str] = [
@@ -67,9 +100,10 @@ def gm_system_prompt(
         "",
         *premise_lines,
         "CHARACTER SHEET:",
-        f"- Name: {character.name or 'unknown'}",
-        f"- Race: {character.race}",
-        f"- Class: {character.character_class}",
+        "<character_sheet>",
+        f"- Name: {_sanitize_gm(character.name or 'unknown')}",
+        f"- Race: {_sanitize_gm(character.race)}",
+        f"- Class: {_sanitize_gm(character.character_class)}",
         f"- Level: {character.level}",
         f"- Hit points: {character.hp}/{character.max_hp}",
         f"- Proficiency bonus: +{character.proficiency_bonus}",
@@ -82,7 +116,8 @@ def gm_system_prompt(
 
     proficient = sorted(skill for skill, ok in character.skills.items() if ok)
     lines.append(
-        "- Proficient skills: " + (", ".join(proficient) if proficient else "none")
+        "- Proficient skills: "
+        + (_sanitize_gm(", ".join(proficient)) if proficient else "none")
     )
     lines.append("- Inventory:")
     if character.inventory:
@@ -99,17 +134,21 @@ def gm_system_prompt(
             stats_str = f" ({', '.join(stats_parts)})" if stats_parts else ""
             equipped_str = " [equipped]" if item.equipped else ""
             lines.append(
-                f"  - {item.name} ({item.type.value}){stats_str}{equipped_str}"
+                f"  - {_sanitize_gm(item.name)} ({item.type.value}){stats_str}{equipped_str}"
             )
     else:
         lines.append("  - none")
     lines.append(
         "- Conditions: "
-        + (", ".join(sorted(character.conditions)) if character.conditions else "none")
+        + (
+            _sanitize_gm(", ".join(sorted(character.conditions)))
+            if character.conditions
+            else "none"
+        )
     )
+    lines.append("</character_sheet>")
     lines.extend(_character_description_lines(character))
     lines.extend(_tag_protocol_lines())
-    lines.extend(_item_json_schema_lines())
     return "\n".join(lines)
 
 
@@ -403,13 +442,18 @@ def _character_description_lines(character: CharacterSheet) -> list[str]:
     motivation = (character.motivation or "").strip()
     if not (personality or appearance or motivation):
         return []
-    lines: list[str] = ["", "CHARACTER DESCRIPTION:"]
+    lines: list[str] = [
+        "",
+        "CHARACTER DESCRIPTION:",
+        "<character_description>",
+    ]
     if personality:
-        lines.append(f"- Personality: {personality}")
+        lines.append(f"- Personality: {_sanitize_gm(personality)}")
     if appearance:
-        lines.append(f"- Appearance: {appearance}")
+        lines.append(f"- Appearance: {_sanitize_gm(appearance)}")
     if motivation:
-        lines.append(f"- Motivation: {motivation}")
+        lines.append(f"- Motivation: {_sanitize_gm(motivation)}")
+    lines.append("</character_description>")
     return lines
 
 
@@ -459,8 +503,7 @@ def _tag_protocol_lines() -> list[str]:
         "- [DAMAGE:<dice>] — e.g. [DAMAGE:2d6+3]; the engine rolls the dice and applies it.",
         "- [HP:<+n or -n>] — change hit points directly, e.g. [HP:-3].",
         "- [ITEM:+<name>] / [ITEM:-<name>] — add or remove an inventory item.",
-        "  When adding an item, also include its structured JSON in your narration",
-        "  (see ITEM JSON FORMAT below).",
+        "  The engine creates the item from the name; you supply only the name.",
         "- [CONDITION:+<name>] / [CONDITION:-<name>] — apply or clear a condition.",
         "",
         "RULES:",
@@ -468,31 +511,4 @@ def _tag_protocol_lines() -> list[str]:
         "- When an outcome is uncertain, request a check with [CHECK:...] and stop there;",
         "  the engine resolves the roll and tells you the result to narrate.",
         "- Do not announce success or failure before the engine has resolved the roll.",
-    ]
-
-
-def _item_json_schema_lines() -> list[str]:
-    """Return the item JSON schema block for GM and character-gen prompts."""
-    return [
-        "",
-        "ITEM JSON FORMAT:",
-        "When you add an item with [ITEM:+name], include a JSON object describing it.",
-        "The JSON object uses this schema:",
-        '{  "name": "<item name>",',
-        '   "type": "weapon" | "armor" | "consumable" | "quest" | "loot" | "key",',
-        '   "damage": <int>,',
-        '   "armor": <int>,',
-        '   "value": <int>,',
-        '   "weight": <float>,',
-        '   "extra": {},',
-        '   "tags": ["<tag1>", "<tag2>"],',
-        '   "description": "<prose description>"',
-        "}",
-        'Only "name" and "type" are required; other fields default to 0/empty.',
-        "Example:",
-        '{"name": "Iron Sword", "type": "weapon", "damage": 6, "value": 15, '
-        '"weight": 3.0, "tags": ["metal"], "description": "A sturdy iron blade."}',
-        "",
-        "Backward compatibility: if you only provide a plain name via [ITEM:+name],",
-        "the engine creates a default item (type: loot, no stats).",
     ]

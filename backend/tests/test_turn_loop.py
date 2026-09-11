@@ -64,7 +64,7 @@ def test_turn_no_check_applies_state_tags_without_second_call():
 
     assert result.llm_calls == 1
     assert result.state.current_hp == state.current_hp - 3
-    assert "potion" in result.state.inventory
+    assert any(item.name == "potion" for item in result.state.character.inventory)
 
 
 # --- check: two calls, engine rolls -------------------------------------

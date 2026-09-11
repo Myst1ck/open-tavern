@@ -80,20 +80,19 @@ def get_client() -> OpenAIClient:
 
 def build_client_from_headers(
     api_key: str | None,
-    base_url: str | None,
     model: str | None,
 ) -> OpenAIClient:
     """Build an LLM client from non-empty header values.
 
     Each non-empty value overrides the corresponding environment fallback inside
     :class:`OpenAIClient`; empty/absent values are dropped so the constructor's
-    env-based defaults apply. Always returns a fresh, network-free client.
+    env-based defaults apply. The base URL is never taken from headers — it
+    comes only from ``OPENAI_BASE_URL`` (or the constructor default). Always
+    returns a fresh, network-free client.
     """
     kwargs: dict[str, str] = {}
     if api_key:
         kwargs["api_key"] = api_key
-    if base_url:
-        kwargs["base_url"] = base_url
     if model:
         kwargs["model"] = model
     try:
@@ -104,19 +103,20 @@ def build_client_from_headers(
 
 def get_per_request_client(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
-    x_base_url: str | None = Header(default=None, alias="X-Base-URL"),
     x_model: str | None = Header(default=None, alias="X-Model"),
     env_client: ChatClient = Depends(get_client),
 ) -> ChatClient:
     """Resolve the LLM client from per-request headers, else the env client.
 
-    Non-empty ``X-API-Key``/``X-Base-URL``/``X-Model`` headers override the
-    environment-configured :class:`OpenAIClient`; without any of them the shared
-    environment client (or its dependency-override test fake) is used unchanged.
+    Non-empty ``X-API-Key``/``X-Model`` headers override the environment-
+    configured :class:`OpenAIClient`; the base URL is fixed from
+    ``OPENAI_BASE_URL`` and never read from headers. Without any recognized
+    header the shared environment client (or its dependency-override test
+    fake) is used unchanged.
     """
-    if not (x_api_key or x_base_url or x_model):
+    if not (x_api_key or x_model):
         return env_client
-    return build_client_from_headers(x_api_key, x_base_url, x_model)
+    return build_client_from_headers(x_api_key, x_model)
 
 
 @lru_cache
@@ -213,8 +213,19 @@ def _session_lock_ctx(session_id: str):
 
 
 def _enforce_rate_limit(request: Request, limiter: RateLimiter, scope: str) -> None:
-    """Reject (429) when the caller has exceeded ``limiter`` for ``scope``."""
+    """Reject (429) when the caller has exceeded ``limiter`` for ``scope``.
+
+    The rate-limit key is the client host by default. ``X-Forwarded-For`` is
+    only trusted when ``OPEN_TAVERN_TRUST_PROXY=1`` — the header is trivially
+    spoofable, so it must never be honored unless the deployment sits behind a
+    proxy that overwrites it. When trusted, the leftmost (client) address is
+    used.
+    """
     host = request.client.host if request.client is not None else "unknown"
+    if os.environ.get("OPEN_TAVERN_TRUST_PROXY", "").strip() == "1":
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            host = forwarded.split(",")[0].strip()
     if not limiter.allow(f"{scope}:{host}"):
         raise HTTPException(status_code=429, detail="rate limit exceeded")
 
@@ -576,11 +587,10 @@ def delete_session(
 ) -> None:
     """Delete ``session_id`` and drop any cached live state (404 if unknown)."""
     _enforce_rate_limit(request, _delete_limiter, "delete")
-    if not storage.delete_session(session_id):
-        raise HTTPException(status_code=404, detail="session not found")
+    with _session_lock_ctx(session_id):
+        if not storage.delete_session(session_id):
+            raise HTTPException(status_code=404, detail="session not found")
     _invalidate_state(session_id)
-    with _SESSION_LOCKS_GUARD:
-        _SESSION_LOCKS.pop(session_id, None)
 
 
 # ── Item Endpoints ────────────────────────────────────────────────────────────

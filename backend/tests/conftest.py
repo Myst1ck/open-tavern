@@ -8,6 +8,13 @@ from open_tavern.api import routes
 @pytest.fixture(autouse=True)
 def _reset_rate_limiters():
     """Reset global rate limiters before each test so buckets never leak."""
-    routes._action_limiter.reset()
-    routes._character_limiter.reset()
+    for limiter in (
+        routes._action_limiter,
+        routes._character_limiter,
+        routes._create_limiter,
+        routes._brainstorm_limiter,
+        routes._delete_limiter,
+        routes._item_limiter,
+    ):
+        limiter.reset()
     yield

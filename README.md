@@ -48,10 +48,13 @@ Set environment variables:
 
 | Variable        | Default                     | Description                       |
 |-----------------|-----------------------------|-----------------------------------|
-| `OPENAI_API_KEY`  | *(required)*              | Your OpenAI-compatible API key    |
-| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Provider base URL                 |
+| `OPENAI_API_KEY`  | *(required)*              | Your OpenAI-compatible API key. Compose refuses to start without it |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Provider base URL. Env-only — `X-Base-URL` header not honored |
 | `OPENAI_MODEL`    | `gpt-4o-mini`             | Model to call                     |
 | `OPEN_TAVERN_DB`  | `open_tavern.db`          | SQLite file path (optional)       |
+| `OPEN_TAVERN_TOKEN` | *(unset)*               | Bearer token for API auth. Unset + non-localhost bind → startup refused |
+| `OPEN_TAVERN_BIND_HOST` | `127.0.0.1`        | uvicorn bind host                 |
+| `OPEN_TAVERN_TRUST_PROXY` | *(unset)*         | `=1` trusts `X-Forwarded-For` for rate-limit client keys |
 
 Run the backend:
 
@@ -71,6 +74,17 @@ npm run dev
 ```
 
 Open the printed URL (default `http://localhost:5173`).
+
+## Production (Docker)
+
+```bash
+docker compose up --build
+```
+
+- Backend container binds `0.0.0.0` internally; host port `127.0.0.1:8000` (loopback only).
+- Non-root user, `restart: unless-stopped`, SQLite in `backend-data` volume.
+- Frontend waits on backend health (`depends_on: service_healthy`); backend `HEALTHCHECK` = `GET /sessions` (auth-exempt).
+- `OPENAI_API_KEY` required — compose refuses without it.
 
 ## Manual play flow
 

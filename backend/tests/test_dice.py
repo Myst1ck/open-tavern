@@ -17,15 +17,6 @@ from open_tavern.dice import (
     roll_expression,
 )
 
-
-def _seed_for_d20(value: int, max_seed: int = 100_000) -> int:
-    """Find a seed whose first d20 roll yields ``value``."""
-    for seed in range(max_seed):
-        if random.Random(seed).randint(1, 20) == value:
-            return seed
-    raise AssertionError(f"No seed found producing a natural {value}")
-
-
 # --- roll() -------------------------------------------------------------
 
 
@@ -122,7 +113,7 @@ def test_check_exact_total():
 
 
 def test_check_crit_success_on_natural_20():
-    seed = _seed_for_d20(20)
+    seed = 5  # first d20 roll is a natural 20
     result = check(0, 30, rng=random.Random(seed))
     assert result.d20_value == 20
     assert result.crit_success is True
@@ -130,7 +121,7 @@ def test_check_crit_success_on_natural_20():
 
 
 def test_check_crit_fail_on_natural_1():
-    seed = _seed_for_d20(1)
+    seed = 31  # first d20 roll is a natural 1
     result = check(10, 5, rng=random.Random(seed))
     assert result.d20_value == 1
     assert result.crit_fail is True

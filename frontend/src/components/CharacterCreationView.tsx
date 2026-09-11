@@ -321,6 +321,9 @@ export default function CharacterCreationView({
     try {
       const response = await createCharacter(sessionId, payload);
       onCharacterCreated(response.character);
+      // A forged character supersedes any saved draft.
+      setDraft({});
+      clearCharDraft();
     } catch (err) {
       setError(toMessage(err));
     } finally {
@@ -334,6 +337,9 @@ export default function CharacterCreationView({
     try {
       const response = await createCharacter(sessionId, description.trim());
       onCharacterCreated(response.character);
+      // A forged character supersedes any saved draft.
+      setDraft({});
+      clearCharDraft();
     } catch (err) {
       setError(toMessage(err));
     } finally {

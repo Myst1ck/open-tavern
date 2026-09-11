@@ -78,7 +78,6 @@ export default function App() {
     sortDir: "asc",
   });
   const [hoveredItem, setHoveredItem] = useState<Item | null>(null);
-  const [hoverPos, setHoverPos] = useState({ x: 0, y: 0 });
   const [selectedItem, setSelectedItem] = useState<Item | null>(null);
 
   const refreshSessions = async () => {
@@ -131,21 +130,13 @@ export default function App() {
     setHoveredItem(item);
   }, []);
 
-  useEffect(() => {
-    if (!hoveredItem) return;
-    const onMove = (e: MouseEvent) =>
-      setHoverPos({ x: e.clientX, y: e.clientY });
-    window.addEventListener("mousemove", onMove);
-    return () => window.removeEventListener("mousemove", onMove);
-  }, [hoveredItem]);
-
   const handleItemClick = useCallback((item: Item) => {
     setSelectedItem(item);
   }, []);
 
   const handleItemAction = useCallback(
     async (action: string, item: Item) => {
-      if (!session || !character) return;
+      if (!session || !character || busy) return;
       try {
         const charId = session.session_id;
         let res;
@@ -168,13 +159,14 @@ export default function App() {
         if (res.success) {
           const fresh = await getState(session.session_id);
           setState(fresh.state);
+          setCharacter(fresh.state.character);
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Item action failed");
       }
       setSelectedItem(null);
     },
-    [session, character],
+    [session, character, busy],
   );
 
   const handleSaveSettings = (next: TavernSettings) => {
@@ -310,6 +302,7 @@ export default function App() {
       };
       setMessages((prev) => [...prev, gmMessage]);
       setState(response.state);
+      setCharacter(response.state.character);
     } catch (err) {
       setError(toMessage(err));
     } finally {
@@ -396,11 +389,7 @@ export default function App() {
               />
             )}
             {hoveredItem !== null && (
-              <ItemTooltip
-                item={hoveredItem}
-                position={hoverPos}
-                visible={true}
-              />
+              <ItemTooltip item={hoveredItem} visible={true} />
             )}
           </>
         )}

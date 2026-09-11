@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Literal, cast
 
 from open_tavern.character.models import resolve_ability, resolve_skill
-from open_tavern.dice.dice import MAX_DICE_COUNT
+from open_tavern.dice.dice import DIE_SIZES, MAX_DICE_COUNT
 
 #: Tag type names the parser recognizes (matched case-insensitively).
 _KNOWN_TAGS: frozenset[str] = frozenset({"CHECK", "DAMAGE", "ITEM", "HP", "CONDITION"})
@@ -48,6 +48,9 @@ _DICE_RE: re.Pattern[str] = re.compile(r"^\d*d\d+(?:[+-]\d+)?$", re.IGNORECASE)
 
 #: Matches the leading dice count of an ``XdY`` expression (empty => 1 die).
 _DICE_COUNT_RE: re.Pattern[str] = re.compile(r"^(\d*)d", re.IGNORECASE)
+
+#: Matches the die size of an ``XdY`` expression (the ``Y`` in ``XdY``).
+_DIE_SIZE_RE: re.Pattern[str] = re.compile(r"^\d*d(\d+)", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -184,6 +187,9 @@ def _parse_damage(body: str) -> DamageAction | None:
         and int(count_match.group(1)) > MAX_DICE_COUNT
     ):
         return None
+    size_match = _DIE_SIZE_RE.match(dice)
+    if size_match is not None and int(size_match.group(1)) not in DIE_SIZES:
+        return None
     return DamageAction(kind="damage", dice=dice)
 
 
@@ -226,11 +232,11 @@ def _split_sign_name(body: str) -> tuple[Literal["+", "-"], str] | None:
 
 
 def _is_dice_expression(expr: str) -> bool:
-    """Return whether ``expr`` is a bare integer or a dice expression."""
+    """Return whether ``expr`` is a non-negative integer or a dice expression."""
     if not expr:
         return False
     if _BARE_INT_RE.fullmatch(expr):
-        return True
+        return int(expr) >= 0
     return _DICE_RE.fullmatch(expr) is not None
 
 

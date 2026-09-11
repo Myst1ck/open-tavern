@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from open_tavern.character import normalize
+from open_tavern.character.items import BaseType, Item
 from open_tavern.state import (
     add_condition,
     add_item,
@@ -39,8 +40,8 @@ def character():
 def state(character):
     state = new_state(character)
     state = apply_hp(state, -5)
-    state = add_item(state, "torch")
-    state = add_item(state, "sword")
+    state = add_item(state, Item(name="torch", type=BaseType.loot))
+    state = add_item(state, Item(name="sword", type=BaseType.loot))
     state = add_condition(state, "poisoned")
     state = add_condition(state, "invisible")
     state = set_scene(state, "tavern")
@@ -55,7 +56,6 @@ def test_persistable_has_exact_keys(state):
     assert set(result) == {
         "current_hp",
         "max_hp",
-        "inventory",
         "conditions",
         "scene",
     }
@@ -66,10 +66,10 @@ def test_persistable_excludes_character(state):
     assert "character" not in result
 
 
-def test_persistable_inventory_is_list(state):
+def test_persistable_excludes_inventory(state):
+    # inventory lives on the character projection, persisted separately
     result = state_to_persistable(state)
-    assert result["inventory"] == ["torch", "sword"]
-    assert isinstance(result["inventory"], list)
+    assert "inventory" not in result
 
 
 def test_persistable_conditions_is_sorted_list(state):
@@ -128,12 +128,14 @@ def test_from_persistable_hp_ignores_stored_max_hp(character):
     assert rebuilt.current_hp == 1
 
 
-def test_from_persistable_inventory_coerced(character):
+def test_from_persistable_inventory_ignored(character):
+    # inventory lives on the character projection; persisted data is ignored
     rebuilt = state_from_persistable(
         character,
         {"inventory": ["torch", 42, None, "sword", ["nested"]]},
     )
-    assert rebuilt.inventory == ("torch", "sword")
+    assert rebuilt.character.inventory == character.inventory
+    assert rebuilt == new_state(character)
 
 
 def test_from_persistable_conditions_coerced(character):

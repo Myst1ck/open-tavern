@@ -11,28 +11,45 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, datetime
 from uuid import uuid4
 
 from open_tavern.character import CharacterSheet, normalize
-from open_tavern.character.items import Item
+from open_tavern.character.items import BaseType, Item
 from open_tavern.state import GameState, state_from_persistable, state_to_persistable
 
 #: Current schema version, tracked in the ``meta`` table.
 #:
 #: Version history:
 #:   * 1 — original layout: ``sessions``/``characters``/``messages`` tables,
-#:     unversioned (no ``meta`` table). Version-1 saves are INCOMPATIBLE
-#:     with the current schema: when ``init`` meets a legacy database (meta
-#:     row missing), the data tables are dropped and recreated — old saves
-#:     are deleted, never preserved, backfilled, or migrated.
-#:   * 2 — this change: adds the ``meta`` table with a ``schema_version`` row
-#:     so incompatible layouts are detected and dropped/recreated.
+#:     unversioned (no ``meta`` table).
+#:   * 2 — adds the ``meta`` table with a ``schema_version`` row.
+#:   * 3 — adds the ``items`` table.
+#:   * 4 — adds session metadata columns (``premise``, ``title``,
+#:     ``updated_at``, ``state_json``).
+#:
+#: Older databases are migrated forward step by step (see ``_MIGRATIONS``);
+#: databases from a newer build are refused, never dropped.
 SCHEMA_VERSION: int = 4
+
+
+class SchemaTooNewError(RuntimeError):
+    """Raised when a database's schema version is newer than this build supports.
+
+    Opening such a database could risk data loss, so :meth:`Storage.init`
+    refuses instead of dropping or silently proceeding.
+    """
 
 #: ``meta`` row key holding the schema version written by :meth:`Storage.init`.
 _SCHEMA_VERSION_KEY: str = "schema_version"
+
+#: Maximum number of messages :meth:`Storage.load_messages` returns per call.
+#:
+#: Configurable: raise or lower this module constant to change the transcript
+#: window without touching the ``load_messages`` signature or any callers.
+MESSAGE_LOAD_LIMIT: int = 500
 
 #: DDL for the version-tracking table. Must exist before version can be read.
 _META_SCHEMA: str = """
@@ -42,8 +59,22 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 """
 
+#: DDL for the items table (schema v3). Kept separate so the migration step
+#: and the full schema share one definition.
+_ITEMS_SCHEMA: str = """
+CREATE TABLE IF NOT EXISTS items (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    character_id TEXT NOT NULL,
+    item_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_items_session ON items(session_id, character_id);
+"""
+
 #: DDL for all data tables. ``IF NOT EXISTS`` keeps ``init`` idempotent.
-_SCHEMA: str = """
+_SCHEMA: str = f"""
 CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
     created_at TEXT NOT NULL,
@@ -69,22 +100,60 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS items (
-    id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL,
-    character_id TEXT NOT NULL,
-    item_json TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
+{_ITEMS_SCHEMA}
 
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id);
-CREATE INDEX IF NOT EXISTS idx_items_session ON items(session_id, character_id);
 """
+
+
+def _add_session_columns(conn: sqlite3.Connection) -> None:
+    """Add the schema-v4 session metadata columns (idempotent).
+
+    ``ALTER TABLE ADD COLUMN`` fails if the column already exists, so each
+    column is added only when missing. Column names come from a fixed tuple,
+    never from user input.
+    """
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
+    for name, ddl in (
+        ("premise", "premise TEXT"),
+        ("title", "title TEXT"),
+        ("updated_at", "updated_at TEXT"),
+        ("state_json", "state_json TEXT"),
+    ):
+        if name not in existing:
+            conn.execute(f"ALTER TABLE sessions ADD COLUMN {ddl}")
+
+
+#: Ordered schema migrations. Each entry is ``(version, step)``: ``version``
+#: is the schema version the step produces, ``step`` is either SQL (run via
+#: ``executescript``) or a callable taking the connection. Steps run in list
+#: order; a database at version N is brought to the current version by
+#: applying every step whose version is greater than N.
+_MIGRATIONS: list[tuple[int, str | Callable[[sqlite3.Connection], None]]] = [
+    (2, _META_SCHEMA),  # 1 -> 2: version tracking
+    (3, _ITEMS_SCHEMA),  # 2 -> 3: items table
+    (4, _add_session_columns),  # 3 -> 4: session metadata columns
+]
 
 
 def _now_iso() -> str:
     """Return the current UTC timestamp as an ISO-8601 string."""
     return datetime.now(UTC).isoformat()
+
+
+def _json_default(obj: object) -> object:
+    """Serialize non-JSON-native values produced by :func:`dataclasses.asdict`.
+
+    ``asdict`` keeps :class:`BaseType` enum members (and nested :class:`Item`
+    dataclasses) intact, which ``json.dumps`` cannot encode. Enums become their
+    string value; items become their ``to_dict`` projection. Both round-trip
+    through :func:`open_tavern.character.normalize` on load.
+    """
+    if isinstance(obj, BaseType):
+        return obj.value
+    if isinstance(obj, Item):
+        return obj.to_dict()
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 
 class Storage:
@@ -102,38 +171,45 @@ class Storage:
 
         Behavior depends on the stored ``schema_version``:
 
-        * no ``meta`` row + no tables — brand-new database: create schema,
-          record ``SCHEMA_VERSION``.
-        * no ``meta`` row + tables present — unversioned legacy database with
-          incompatible version-1 saves: drop and recreate the data tables
-          (destructive, approved), record ``SCHEMA_VERSION``.
+        * no ``meta`` row + no tables — brand-new database: create the
+          current schema directly and record ``SCHEMA_VERSION``.
+        * no ``meta`` row + tables present — unversioned legacy (v1)
+          database: migrate forward through every step in ``_MIGRATIONS``.
         * stored version == ``SCHEMA_VERSION`` — no-op (idempotent).
-        * stored version != ``SCHEMA_VERSION`` — versioned mismatch: layout is
-          old (or from a newer build) and incompatible, so the data tables are
-          dropped and recreated, then the version recorded.
+        * stored version < ``SCHEMA_VERSION`` — migrate forward: apply each
+          ``_MIGRATIONS`` step with a version greater than the stored one,
+          in order. No data is dropped.
+        * stored version > ``SCHEMA_VERSION`` — database from a newer build:
+          raise :class:`SchemaTooNewError` instead of opening it.
         """
         with self._lock, self._conn:
             # The meta table must exist before the version can be read.
             self._conn.executescript(_META_SCHEMA)
             version = self._read_schema_version()
-            if version == SCHEMA_VERSION:
-                # Already migrated; run the idempotent DDL as a repair.
-                self._conn.executescript(_SCHEMA)
-                return
             if version is None and not self._table_exists("sessions"):
-                # Brand-new database: nothing to drop.
+                # Brand-new database: current schema directly, no replay.
                 self._conn.executescript(_SCHEMA)
                 self._write_schema_version()
                 return
-            # Destructive path: legacy unversioned DB or versioned
-            # mismatch. Old/incompatible saves are deleted (approved).
-            self._conn.executescript(
-                "DROP TABLE IF EXISTS sessions;"
-                "DROP TABLE IF EXISTS characters;"
-                "DROP TABLE IF EXISTS messages;"
-                "DROP TABLE IF EXISTS items;"
-            )
-            self._conn.executescript(_SCHEMA)
+            if version is None:
+                # Unversioned legacy (v1) database: migrate from v1.
+                version = 1
+            if version > SCHEMA_VERSION:
+                raise SchemaTooNewError(
+                    f"Database schema version {version} is newer than the "
+                    f"supported version {SCHEMA_VERSION}; refusing to open."
+                )
+            if version == SCHEMA_VERSION:
+                # Already current; run the idempotent DDL as a repair.
+                self._conn.executescript(_SCHEMA)
+                return
+            # Migrate forward, oldest step first. Never drops data.
+            for step_version, step in _MIGRATIONS:
+                if step_version > version:
+                    if callable(step):
+                        step(self._conn)
+                    else:
+                        self._conn.executescript(step)
             self._write_schema_version()
 
     def _table_exists(self, name: str) -> bool:
@@ -147,8 +223,8 @@ class Storage:
     def _read_schema_version(self) -> int | None:
         """Return the stored schema version, or ``None`` if no row exists.
 
-        An unparseable stored value is treated as ``0`` so it fails the
-        version check and takes the destructive path.
+        An unparseable stored value is treated as ``0`` so it migrates from
+        the earliest version rather than erroring.
         """
         row = self._conn.execute(
             "SELECT value FROM meta WHERE key = ?", (_SCHEMA_VERSION_KEY,)
@@ -360,7 +436,7 @@ class Storage:
 
     def save_character(self, session_id: str, character: CharacterSheet) -> None:
         """Serialize ``character`` to JSON and upsert it for ``session_id``."""
-        data_json = json.dumps(asdict(character))
+        data_json = json.dumps(asdict(character), default=_json_default)
         with self._lock, self._conn:
             self._conn.execute(
                 "INSERT INTO characters (session_id, data_json, character_name) "
@@ -398,16 +474,16 @@ class Storage:
     def load_messages(self, session_id: str) -> list[dict]:
         """Return the most recent messages for ``session_id`` in insertion order.
 
-        The story engine keeps at most 20 recent turns in its prompt history
-        (``story.game._MAX_HISTORY_MESSAGES``), so only that window is fetched:
-        rows are selected newest-first and reversed in Python, avoiding an
-        unbounded read of the whole transcript.
+        Rows are selected newest-first and reversed in Python, avoiding an
+        unbounded read of the whole transcript. The window size is bounded by
+        :data:`MESSAGE_LOAD_LIMIT` (default 500); adjust that module constant
+        to change the limit — the signature stays stable.
         """
         with self._lock:
             rows = self._conn.execute(
                 "SELECT role, content FROM messages "
-                "WHERE session_id = ? ORDER BY id DESC LIMIT 20",
-                (session_id,),
+                "WHERE session_id = ? ORDER BY id DESC LIMIT ?",
+                (session_id, MESSAGE_LOAD_LIMIT),
             ).fetchall()
         return [
             {"role": row["role"], "content": row["content"]} for row in reversed(rows)

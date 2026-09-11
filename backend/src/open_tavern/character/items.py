@@ -6,6 +6,7 @@ via to_dict/from_dict round-trip.
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -25,13 +26,20 @@ class BaseType(Enum):
 
 @dataclass(frozen=True)
 class ItemStats:
-    """Hybrid stats: fixed numeric fields + freeform extra dict."""
+    """Hybrid stats: fixed numeric fields + freeform extra dict.
+
+    ``extra`` is deep-copied at construction, so mutating the caller's dict
+    after the fact does not affect this instance.
+    """
 
     damage: int = 0
     armor: int = 0
     value: int = 0
     weight: float = 0.0
     extra: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "extra", copy.deepcopy(self.extra))
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to JSON-compatible dict."""
@@ -40,7 +48,7 @@ class ItemStats:
             "armor": self.armor,
             "value": self.value,
             "weight": self.weight,
-            "extra": self.extra,
+            "extra": copy.deepcopy(self.extra),
         }
 
     @classmethod
@@ -63,7 +71,7 @@ class ItemStats:
 
         return cls(
             damage=int(max(0, _coerce("damage", 0))),
-            armor=int(_coerce("armor", 0)),
+            armor=int(max(0, _coerce("armor", 0))),
             value=int(max(0, _coerce("value", 0))),
             weight=max(0.0, _coerce("weight", 0.0)),
             extra=d.get("extra", {}),
@@ -72,7 +80,7 @@ class ItemStats:
 
 @dataclass(frozen=True)
 class Item:
-    """An inventory item. Frozen/hashable. Auto-generates ID when omitted."""
+    """An inventory item. Frozen dataclass. Auto-generates ID when omitted."""
 
     name: str
     type: BaseType
@@ -103,7 +111,18 @@ class Item:
         ``id`` is optional — auto-generated via ``uuid4().hex[:8]`` when missing.
         """
         raw_type = d.get("type", "loot")
-        item_type = raw_type if isinstance(raw_type, BaseType) else BaseType(raw_type)
+        if isinstance(raw_type, BaseType):
+            item_type = raw_type
+        else:
+            try:
+                item_type = BaseType(raw_type)
+            except ValueError:
+                item_type = BaseType.loot
+
+        try:
+            quantity = int(d.get("quantity", 1))
+        except (TypeError, ValueError):
+            quantity = 1
 
         return cls(
             id=d.get("id", uuid4().hex[:8]),
@@ -113,5 +132,5 @@ class Item:
             stats=ItemStats.from_dict(d.get("stats", {})),
             description=d.get("description", ""),
             equipped=d.get("equipped", False),
-            quantity=d.get("quantity", 1),
+            quantity=quantity,
         )

@@ -196,7 +196,7 @@ def test_validate_rejects_non_mapping():
         (lambda r: r.update(skills={"Pickpocketing": True}), "unknown skill"),
         (
             lambda r: r.update(inventory="sword"),
-            "'inventory' must be a list of strings",
+            "'inventory' must be a list of objects",
         ),
         (lambda r: r.update(name=42), "'name' must be a string"),
     ],

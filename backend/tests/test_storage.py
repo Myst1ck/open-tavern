@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import replace
 
 import pytest
 
 from open_tavern.character import CharacterSheet, Goal, Quest, normalize
+from open_tavern.character.items import BaseType, Item
 from open_tavern.state import new_state, set_scene
 from open_tavern.storage import Storage
+from open_tavern.storage.db import MESSAGE_LOAD_LIMIT, SchemaTooNewError
 
 
 def _make_character(name: str = "Aria") -> CharacterSheet:
@@ -28,7 +31,10 @@ def _make_character(name: str = "Aria") -> CharacterSheet:
                 "CHA": 18,
             },
             "skills": {"Stealth": True},
-            "inventory": ["thieves' tools", "dagger"],
+            "inventory": [
+                {"name": "thieves' tools", "type": "loot", "quantity": 1},
+                {"name": "dagger", "type": "weapon", "quantity": 1},
+            ],
             "conditions": ["poisoned"],
             "backstory": "Grew up on the streets.",
         }
@@ -97,7 +103,7 @@ def test_migration_is_idempotent(tmp_path):
     assert {"title", "updated_at", "state_json", "premise"} <= cols
 
 
-def test_migration_deletes_legacy_unversioned_saves(tmp_path):
+def test_migration_preserves_legacy_unversioned_saves(tmp_path):
     path = tmp_path / "old.db"
     conn = sqlite3.connect(path)
     conn.execute(
@@ -128,24 +134,24 @@ def test_migration_deletes_legacy_unversioned_saves(tmp_path):
     conn.row_factory = sqlite3.Row
     try:
         cols = {row["name"] for row in conn.execute("PRAGMA table_info(sessions)")}
-        rows = list(conn.execute("SELECT id, world_theme FROM sessions"))
+        rows = [tuple(r) for r in conn.execute("SELECT id, world_theme FROM sessions")]
         version = conn.execute(
             "SELECT value FROM meta WHERE key = 'schema_version'"
         ).fetchone()
     finally:
         conn.close()
 
-    # Legacy version-1 saves are DELETED, never preserved or migrated.
+    # Legacy version-1 saves are MIGRATED forward, never dropped.
     assert {"title", "updated_at", "state_json", "premise"} <= cols
-    assert rows == []
+    assert rows == [("abc", "gothic")]
     assert version is not None and version["value"] == "4"
 
 
-def test_migration_deletes_versioned_mismatch_saves(tmp_path):
-    path = tmp_path / "v1.db"
+def test_migration_applies_steps_in_order(tmp_path):
+    path = tmp_path / "v2.db"
     conn = sqlite3.connect(path)
     conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-    conn.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '1')")
+    conn.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '2')")
     conn.execute(
         "CREATE TABLE sessions ("
         "id TEXT PRIMARY KEY, created_at TEXT NOT NULL, world_theme TEXT NOT NULL)"
@@ -163,16 +169,57 @@ def test_migration_deletes_versioned_mismatch_saves(tmp_path):
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     try:
-        rows = list(conn.execute("SELECT id FROM sessions"))
+        tables = {
+            row["name"]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+        cols = {row["name"] for row in conn.execute("PRAGMA table_info(sessions)")}
+        rows = [tuple(r) for r in conn.execute("SELECT id, world_theme FROM sessions")]
         version = conn.execute(
             "SELECT value FROM meta WHERE key = 'schema_version'"
         ).fetchone()
     finally:
         conn.close()
 
-    # Versioned mismatch (1 != 4) also takes the destructive path.
-    assert rows == []
+    # v2 -> v3 (items table) -> v4 (session columns), data preserved.
+    assert "items" in tables
+    assert {"title", "updated_at", "state_json", "premise"} <= cols
+    assert rows == [("abc", "gothic")]
     assert version is not None and version["value"] == "4"
+
+
+def test_migration_refuses_newer_database(tmp_path):
+    path = tmp_path / "newer.db"
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    conn.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '99')")
+    conn.execute(
+        "CREATE TABLE sessions ("
+        "id TEXT PRIMARY KEY, created_at TEXT NOT NULL, world_theme TEXT NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO sessions (id, created_at, world_theme) VALUES ('abc', 't0', 'gothic')"
+    )
+    conn.commit()
+    conn.close()
+
+    store = Storage(str(path))
+    with pytest.raises(SchemaTooNewError):
+        store.init()
+    store.close()
+
+    # Refused, not dropped: version and data untouched.
+    conn = sqlite3.connect(path)
+    try:
+        version = conn.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version'"
+        ).fetchone()
+        rows = [tuple(r) for r in conn.execute("SELECT id FROM sessions")]
+    finally:
+        conn.close()
+
+    assert version is not None and version[0] == "99"
+    assert rows == [("abc",)]
 
 
 # --- premise ---------------------------------------------------------------
@@ -282,6 +329,43 @@ def test_character_upsert_replaces_existing(storage):
     loaded = storage.load_character(session_id)
     assert loaded is not None
     assert loaded.name == "Bram"
+
+
+def test_save_and_load_character_with_inventory_roundtrip(storage):
+    session_id = storage.create_session("gothic")
+    sheet = normalize(
+        {
+            "name": "Aria",
+            "race": "human",
+            "character_class": "rogue",
+            "level": 3,
+            "abilities": {
+                "STR": 10,
+                "DEX": 16,
+                "CON": 14,
+                "INT": 12,
+                "WIS": 8,
+                "CHA": 18,
+            },
+            "inventory": [
+                {"name": "Iron Dagger", "type": "weapon", "quantity": 1},
+                {"name": "Health Potion", "type": "consumable", "quantity": 2},
+            ],
+        }
+    )
+
+    storage.save_character(session_id, sheet)
+    loaded = storage.load_character(session_id)
+
+    assert loaded is not None
+    assert loaded == sheet
+    assert loaded.inventory[0].type is BaseType.weapon
+    assert loaded.inventory[1].type is BaseType.consumable
+
+
+def test_item_with_enum_type_serializes_to_json():
+    item = Item(name="Iron Dagger", type=BaseType.weapon)
+    assert json.loads(json.dumps(item.to_dict()))["type"] == "weapon"
 
 
 # --- messages ------------------------------------------------------------
@@ -600,3 +684,28 @@ def test_reinit_same_version_preserves_data(storage):
     assert loaded is not None
     assert loaded.name == "Aria"
     assert storage.load_messages(session_id) == [{"role": "user", "content": "hello"}]
+
+
+def test_load_messages_returns_up_to_default_limit(storage):
+    session_id = storage.create_session("gothic")
+    for i in range(MESSAGE_LOAD_LIMIT + 100):
+        storage.append_message(session_id, "user", f"msg-{i}")
+
+    messages = storage.load_messages(session_id)
+
+    assert len(messages) == MESSAGE_LOAD_LIMIT
+    assert messages[0] == {"role": "user", "content": "msg-100"}
+    assert messages[-1] == {"role": "user", "content": f"msg-{MESSAGE_LOAD_LIMIT + 99}"}
+
+
+def test_load_messages_configurable_limit(storage, monkeypatch):
+    monkeypatch.setattr("open_tavern.storage.db.MESSAGE_LOAD_LIMIT", 3)
+    session_id = storage.create_session("gothic")
+    for i in range(5):
+        storage.append_message(session_id, "user", f"msg-{i}")
+
+    assert storage.load_messages(session_id) == [
+        {"role": "user", "content": "msg-2"},
+        {"role": "user", "content": "msg-3"},
+        {"role": "user", "content": "msg-4"},
+    ]

@@ -1,23 +1,32 @@
 services:
   backend:
     build: ./backend
+    restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:?OPENAI_API_KEY is required — set it in the environment or .env before starting}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
       - OPEN_TAVERN_DB=/data/open_tavern.db
-      - OPEN_TAVERN_ALLOWED_ORIGINS=${OPEN_TAVERN_ALLOWED_ORIGINS:-http://localhost:5173,http://brain:5173}
+      - OPEN_TAVERN_ALLOWED_ORIGINS=${OPEN_TAVERN_ALLOWED_ORIGINS:-http://localhost:5173}
+      # Bearer token required for API access; startup refuses to run without it
+      # when bound to a non-localhost interface (see main.validate_startup_config).
+      - OPEN_TAVERN_TOKEN=${OPEN_TAVERN_TOKEN}
+      # Container listens on all interfaces so the frontend container can reach
+      # it over the docker network; the host port is bound to 127.0.0.1 above.
+      - OPEN_TAVERN_BIND_HOST=0.0.0.0
     volumes:
       - backend-data:/data
 
   frontend:
     build: ./frontend
+    restart: unless-stopped
     ports:
       - "5173:5173"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
 volumes:
   backend-data:

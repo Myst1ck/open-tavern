@@ -7,6 +7,7 @@ by code from raw scores/level — never trusted from input.
 
 from __future__ import annotations
 
+import copy
 import random
 from dataclasses import dataclass
 
@@ -148,7 +149,11 @@ class Quest:
 
 @dataclass(frozen=True)
 class CharacterSheet:
-    """Immutable D&D 5e character sheet with code-computed derived values."""
+    """Frozen D&D 5e character sheet with code-computed derived values.
+
+    Mutable containers (``skills``) are deep-copied at construction, so
+    mutating the caller's dict after the fact does not affect this sheet.
+    """
 
     race: str
     character_class: str
@@ -170,6 +175,9 @@ class CharacterSheet:
     goals: tuple[Goal, ...] = ()
     quests: tuple[Quest, ...] = ()
     opening: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "skills", copy.deepcopy(self.skills))
 
     def ability_modifier(self, name: str) -> int:
         """Ability modifier for ``name`` (e.g. ``"STR"``)."""

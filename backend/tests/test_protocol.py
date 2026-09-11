@@ -91,6 +91,29 @@ def test_damage_bare_number():
     assert action.dice == "5"
 
 
+def test_damage_rejects_unsupported_die_sizes():
+    for text in ("[DAMAGE:d7]", "[DAMAGE:2d13]", "[DAMAGE:1d3]", "[DAMAGE:1d999]"):
+        turn = parse(text)
+        assert turn.actions == ()
+        assert turn.narration == ""
+
+
+def test_damage_rejects_negative_bare_number():
+    turn = parse("[DAMAGE:-5]")
+    assert turn.actions == ()
+    assert turn.narration == ""
+
+
+def test_damage_accepts_supported_die_sizes():
+    for text, expected in (
+        ("[DAMAGE:d4]", "d4"),
+        ("[DAMAGE:1d100]", "1d100"),
+        ("[DAMAGE:2d6-3]", "2d6-3"),
+    ):
+        turn = parse(text)
+        assert turn.actions == (DamageAction(kind="damage", dice=expected),)
+
+
 def test_item_add_tag():
     turn = parse("[ITEM:+sword]")
     assert turn.actions == (ItemAction(kind="item", sign="+", name="sword"),)

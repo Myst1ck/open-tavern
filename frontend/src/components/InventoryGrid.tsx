@@ -33,6 +33,8 @@ export default function InventoryGrid({
           onClick={() => onItemClick(item)}
           onMouseEnter={() => onItemHover(item)}
           onMouseLeave={() => onItemHover(null)}
+          onFocus={() => onItemHover(item)}
+          onBlur={() => onItemHover(null)}
           type="button"
         >
           <span className="item-emoji">{TYPE_EMOJI[item.type]}</span>
