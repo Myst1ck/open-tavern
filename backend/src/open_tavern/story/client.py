@@ -23,7 +23,7 @@ DEFAULT_TIMEOUT: float = 60.0
 #: Shared HTTP client reused across LLM calls so keep-alive connections are
 #: pooled instead of a fresh connection per request. ``httpx.Client`` is
 #: thread-safe and hosts are pooled independently, so one instance serves any
-#: per-request ``base_url``. See https://www.python-httpx.org/advanced/clients/
+#: base URL. See https://www.python-httpx.org/advanced/clients/
 _HTTP_CLIENT: httpx.Client = httpx.Client(timeout=DEFAULT_TIMEOUT)
 
 #: Networks never reachable by a legitimate LLM endpoint. Blocking these closes

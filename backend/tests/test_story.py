@@ -7,6 +7,7 @@ import json
 import pytest
 
 from open_tavern.character import CharacterSheet, Goal, Quest, normalize
+from open_tavern.character.items import BaseType
 from open_tavern.story import (
     DEFAULT_BASE_URL,
     DEFAULT_MODEL,
@@ -174,7 +175,10 @@ def test_generate_character_returns_normalized_sheet():
     assert sheet.character_class == "rogue"
     assert sheet.level == 2
     assert sheet.skills["Stealth"] is True
-    assert sheet.inventory == ("dagger", "lockpicks")
+    assert [(i.name, i.type, i.quantity) for i in sheet.inventory] == [
+        ("dagger", BaseType.loot, 1),
+        ("lockpicks", BaseType.loot, 1),
+    ]
     assert sheet.hp == sheet.max_hp
     # json_mode was requested
     assert client.calls[0]["json_mode"] is True

@@ -1,3 +1,5 @@
+import { useEffect, useRef } from "react";
+
 import type { Item } from "../api";
 
 interface ItemModalProps {
@@ -17,9 +19,75 @@ export default function ItemModal({
   onUse,
   onDrop,
 }: ItemModalProps) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  useEffect(() => {
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const dialog = dialogRef.current;
+
+    const focusableSelector = [
+      "button",
+      "input",
+      "select",
+      "textarea",
+      'a[href]',
+      '[tabindex]:not([tabindex="-1"])',
+    ].join(", ");
+
+    const getFocusable = () => {
+      if (!dialog) return [];
+      return Array.from(
+        dialog.querySelectorAll<HTMLElement>(focusableSelector)
+      ).filter((el) => !el.hasAttribute("disabled"));
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onCloseRef.current();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const focusable = getFocusable();
+      if (focusable.length === 0) {
+        e.preventDefault();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (e.shiftKey) {
+        if (active === first || !dialog?.contains(active)) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else if (active === last || !dialog?.contains(active)) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+
+    const focusable = getFocusable();
+    (focusable[0] ?? dialog)?.focus();
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      previouslyFocused?.focus();
+    };
+  }, []);
+
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="item-modal panel" onClick={(e) => e.stopPropagation()}>
+      <div
+        ref={dialogRef}
+        className="item-modal panel"
+        role="dialog"
+        aria-modal="true"
+        aria-label={item.name}
+        onClick={(e) => e.stopPropagation()}
+      >
         <header className="modal-header">
           <h2>{item.name}</h2>
           <button className="modal-close" onClick={onClose} type="button">

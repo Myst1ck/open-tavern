@@ -7,6 +7,7 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from open_tavern.character import normalize
+from open_tavern.character.items import BaseType, Item
 from open_tavern.state import (
     add_condition,
     add_item,
@@ -49,7 +50,7 @@ def test_new_state_initializes_hp_to_max_hp(character):
     state = new_state(character)
     assert state.current_hp == character.max_hp
     assert state.max_hp == character.max_hp
-    assert state.inventory == ()
+    assert state.character.inventory == ()
     assert state.conditions == frozenset()
     assert state.scene == ""
 
@@ -93,26 +94,29 @@ def test_apply_hp_clamps_ceiling(state):
 
 
 def test_add_item_adds(state):
-    result = add_item(state, "torch")
-    assert result.inventory == ("torch",)
-    assert state.inventory == ()
+    result = add_item(state, Item(name="torch", type=BaseType.loot))
+    assert result.character.inventory[0].name == "torch"
+    assert state.character.inventory == ()
 
 
 def test_add_item_no_duplicates(state):
-    once = add_item(state, "torch")
-    twice = add_item(once, "torch")
-    assert twice.inventory == ("torch",)
+    item = Item(name="torch", type=BaseType.loot)
+    once = add_item(state, item)
+    twice = add_item(once, item)
+    assert len(twice.character.inventory) == 1
+    assert twice.character.inventory == once.character.inventory
 
 
 def test_remove_item_removes(state):
-    with_item = add_item(state, "torch")
-    result = remove_item(with_item, "torch")
-    assert result.inventory == ()
+    with_item = add_item(state, Item(name="torch", type=BaseType.loot))
+    item_id = with_item.character.inventory[0].id
+    result = remove_item(with_item, item_id)
+    assert result.character.inventory == ()
 
 
 def test_remove_item_absent_noop(state):
-    result = remove_item(state, "torch")
-    assert result.inventory == ()
+    result = remove_item(state, "no-such-id")
+    assert result.character.inventory == ()
     assert result == state
 
 
@@ -159,10 +163,10 @@ def test_set_scene(state):
 def test_original_state_unchanged(character):
     original = new_state(character)
     apply_hp(original, -3)
-    add_item(original, "sword")
+    add_item(original, Item(name="sword", type=BaseType.loot))
     add_condition(original, "poisoned")
     set_scene(original, "forest")
     assert original.current_hp == character.max_hp
-    assert original.inventory == ()
+    assert original.character.inventory == ()
     assert original.conditions == frozenset()
     assert original.scene == ""

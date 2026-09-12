@@ -155,7 +155,10 @@ def _apply_actions(
                 if outcome is not None:
                     rolls.append(outcome)
         elif isinstance(action, DamageAction):
-            damage = roll_expression(action.dice, rng=rng)
+            try:
+                damage = roll_expression(action.dice, rng=rng)
+            except ValueError:
+                continue
             state = apply_hp(state, -damage)
         elif isinstance(action, HpAction):
             state = apply_hp(state, action.delta)
