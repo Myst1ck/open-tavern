@@ -123,6 +123,11 @@ async def _lifespan(application: FastAPI):
 def create_app() -> FastAPI:
     """Build and return a configured FastAPI application."""
     application = FastAPI(title="Open Tavern", version="0.1.0", lifespan=_lifespan)
+    # Starlette runs the last-added middleware first (outermost). Add auth
+    # first so CORS ends up outermost and answers OPTIONS preflights for
+    # allowed origins before the bearer check can 401 them.
+    token = os.environ.get("OPEN_TAVERN_TOKEN", "").strip() or None
+    application.add_middleware(BearerTokenMiddleware, token=token)
     application.add_middleware(
         CORSMiddleware,
         allow_origins=_allowed_origins(),
@@ -130,8 +135,6 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    token = os.environ.get("OPEN_TAVERN_TOKEN", "").strip() or None
-    application.add_middleware(BearerTokenMiddleware, token=token)
     application.include_router(router)
     return application
 

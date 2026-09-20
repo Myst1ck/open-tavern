@@ -1,6 +1,6 @@
 # Open Tavern — SETUP / Bring-Up Playbook
 
-Authoritative bring-up doc. Fresh machine → follow this. Generated 2026-08-28 by `/up`. Refreshed 2026-09-08 by `/up` — verified bring-up, all endpoints 200. Refreshed 2026-09-11 — auth/bind/proxy env vars, compose runtime, migration runner documented. Refreshed 2026-09-20 — SELinux `:Z` volume, uid 10001 ownership fix, token requirement under compose, frontend `Created`-state quirk.
+Authoritative bring-up doc. Fresh machine → follow this. Generated 2026-08-28 by `/up`. Refreshed 2026-09-08 by `/up` — verified bring-up, all endpoints 200. Refreshed 2026-09-11 — auth/bind/proxy env vars, compose runtime, migration runner documented. Refreshed 2026-09-20 — SELinux `:Z` volume, uid 10001 ownership fix, token requirement under compose, frontend `Created`-state quirk. Refreshed 2026-09-20 (later) — backend host port now binds Tailscale IP (not loopback), CORS middleware order fix, podman-compose stale-image gotcha.
 
 ## Architecture
 
@@ -21,7 +21,7 @@ Docker/Podman available. No separate DB/cache/queue services. Two containers tot
 | Backend  | http://<host-ip>:8000/docs | `GET /docs` → 200 (401 when token set) | Swagger UI |
 | Frontend | http://<host-ip>:5173 | `GET /` → 200                  | Vite-served HTML                          |
 
-Backend binds `127.0.0.1` by default (`OPEN_TAVERN_BIND_HOST`, loopback only); frontend dev server binds `0.0.0.0`. Reachable at `http://localhost:<port>` locally, `http://<host-ip>:<port>` on LAN when bound to `0.0.0.0`.
+Backend binds `127.0.0.1` by default (`OPEN_TAVERN_BIND_HOST`, loopback only); frontend dev server binds `0.0.0.0`. Reachable at `http://localhost:<port>` locally, `http://<host-ip>:<port>` on LAN when bound to `0.0.0.0`. Under compose, the backend host port binds the machine's Tailscale IP (see Production runtime) — reachable over Tailscale, not LAN.
 
 Note: no root `/` API route — `/` on :8000 returns 404 by design. Use `/sessions` or `/docs` for health.
 
@@ -36,9 +36,9 @@ Note: no root `/` API route — `/` on :8000 returns 404 by design. Use `/sessio
 | `OPENAI_MODEL`     | `gpt-4o-mini`              | no       | Model to call                      |
 | `OPEN_TAVERN_DB`   | `open_tavern.db`           | no       | SQLite file path (relative to cwd) |
 | `OPEN_TAVERN_TOKEN`| — (unset)                  | yes*     | Bearer token for API auth. Unset + localhost bind → warning; unset + non-localhost bind → startup refused. Compose sets `OPEN_TAVERN_BIND_HOST=0.0.0.0`, so compose runs REQUIRE it. Generate: `openssl rand -hex 32`, put in root `.env` (compose interpolation) |
-| `OPEN_TAVERN_BIND_HOST` | `127.0.0.1`          | no       | uvicorn bind host. Compose sets `0.0.0.0` (container network); host port stays `127.0.0.1` |
+| `OPEN_TAVERN_BIND_HOST` | `127.0.0.1`          | no       | uvicorn bind host. Compose sets `0.0.0.0` (container network); host port binds the machine's Tailscale IP (see Production runtime) |
 | `OPEN_TAVERN_TRUST_PROXY` | — (unset)          | no       | `=1` trusts `X-Forwarded-For` for rate-limit client keys. Default off — header ignored |
-| `OPEN_TAVERN_ALLOWED_ORIGINS` | `http://localhost:3000` | no       | Comma-separated CORS origins. Add `http://<host-ip>:5173` for remote browser access |
+| `OPEN_TAVERN_ALLOWED_ORIGINS` | `http://localhost:3000` | no       | Comma-separated CORS origins. Add `http://<host-ip>:5173` for LAN, or the Tailscale origin `http://<tailscale-ip>:5173` for remote browser access. Root `.env` ships `http://100.88.11.28:5173,http://brain:5173` — substitute your own Tailscale IP (`tailscale ip -4`) |
 
 ### Frontend (`.env` file, `frontend/.env`, copy of `frontend/.env.example`)
 
@@ -81,6 +81,7 @@ npm run dev -- --host 0.0.0.0 --port 5173
 > Uses Podman (not Docker). `podman-compose` required.
 > ⚠️ Use `podman-compose` (Python package), NOT `podman compose` (delegates to docker-compose, broken socket). If containers fail with no clear error, check you're running the right command.
 > ⚠️ podman-compose 1.5.0 may print `Build command failed` after a HEALTHCHECK OCI-format warning. Non-fatal — verify image tagged (`podman images`) before treating as failure.
+> ⚠️ **Stale image:** `podman-compose up -d --build backend` may build a new image but NOT recreate the container — the running container keeps the old image. Fix: `podman rm -f <container>` then `podman-compose up -d <service>`. Verify the container's image: `podman inspect <container> --format '{{.Image}}'`.
 
 ### Quick start
 
@@ -149,7 +150,7 @@ podman cp $(podman-compose ps -q backend):/data/open_tavern.db ./open_tavern.db
 ### Production runtime
 
 - `docker compose up --build` (or `podman-compose up --build`) builds and starts both containers.
-- Backend container binds `0.0.0.0` internally (compose sets `OPEN_TAVERN_BIND_HOST=0.0.0.0` so the frontend container reaches it over the docker network); host port mapped to `127.0.0.1:8000` only — not exposed on LAN.
+- Backend container binds `0.0.0.0` internally (compose sets `OPEN_TAVERN_BIND_HOST=0.0.0.0` so the frontend container reaches it over the docker network); host port binds the machine's Tailscale IP (`100.88.11.28:8000:8000` in `docker-compose.yml`) — reachable over Tailscale, not exposed on LAN. **Tailscale IP is machine-specific** — substitute your own (`tailscale ip -4`) in `docker-compose.yml`.
 - `OPEN_TAVERN_TOKEN` REQUIRED under compose (non-localhost bind). Backend refuses start without it. Set in root `.env`; frontend user pastes token into Settings panel (sent as `X-API-Key` header, stored in `localStorage`).
 - Runs as non-root user `appuser` (uid 10001); SQLite volume `backend-data` mounted at `/data` with `:Z` (SELinux).
 - `restart: unless-stopped` on both services.
@@ -170,14 +171,16 @@ podman cp $(podman-compose ps -q backend):/data/open_tavern.db ./open_tavern.db
 Frontend derives backend URL from the browser's own host: `http://<browser-host>:8000` (`frontend/src/api.ts`). No `VITE_API_BASE_URL` override needed — browser loads `<host-ip>:5173`, frontend calls `<host-ip>:8000` automatically.
 
 Required for remote access:
-1. Backend MUST bind `0.0.0.0` — default is `127.0.0.1` (set `OPEN_TAVERN_BIND_HOST=0.0.0.0` or pass `--host 0.0.0.0`).
+1. Backend MUST bind a reachable interface — default is `127.0.0.1` (set `OPEN_TAVERN_BIND_HOST=0.0.0.0` or pass `--host 0.0.0.0`). Under compose, the host port binds the machine's Tailscale IP (`docker-compose.yml`); substitute your own (`tailscale ip -4`).
 2. Frontend MUST bind `0.0.0.0` (`--host 0.0.0.0`).
 3. Firewall open on ports 8000 + 5173 (see below).
-4. CORS: backend only allows `localhost:3000` by default. For remote browser access, set `OPEN_TAVERN_ALLOWED_ORIGINS` to include the origin URL, e.g. `OPEN_TAVERN_ALLOWED_ORIGINS=http://localhost:5173,http://<host-ip>:5173`. Without this, browser API calls fail with CORS error.
+4. CORS: backend only allows `localhost:3000` by default. For remote browser access, set `OPEN_TAVERN_ALLOWED_ORIGINS` to include the origin URL, e.g. `OPEN_TAVERN_ALLOWED_ORIGINS=http://localhost:5173,http://<host-ip>:5173`. For Tailscale, include the Tailscale origin (`http://<tailscale-ip>:5173`). Without this, browser API calls fail with CORS error.
 
 Symptom: `failed to fetch` in browser on character create or any API call.
 Cause: backend unreachable at `<host-ip>:8000` (loopback bind, wrong port, firewall) OR CORS origin mismatch — browser origin not in `OPEN_TAVERN_ALLOWED_ORIGINS`.
 Verify from remote device: `curl http://<host-ip>:8000/sessions` → expect `200`.
+
+**CORS preflight / middleware order:** `BearerTokenMiddleware` is added BEFORE `CORSMiddleware` in `main.py` so CORS is outermost and answers preflight `OPTIONS` for allowed origins before auth runs. If order is reversed, preflight gets `401` and the browser reports `failed to fetch` on ALL cross-origin use — even with correct origins. Symptom `failed to fetch` cross-origin → check middleware order in `create_app()`.
 
 ## Health Check
 

@@ -86,6 +86,23 @@ def test_health_path_exempt(monkeypatch, storage):
     assert resp.status_code == 200
 
 
+def test_cors_preflight_bypasses_auth(monkeypatch):
+    monkeypatch.setenv("OPEN_TAVERN_TOKEN", "sekrit")
+    monkeypatch.setenv("OPEN_TAVERN_ALLOWED_ORIGINS", "http://localhost:5173")
+    client = _authed_app()
+
+    resp = client.options(
+        "/sessions",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert resp.headers.get("access-control-allow-origin") == "http://localhost:5173"
+
+
 def test_no_token_configured_serves_open(monkeypatch, storage):
     monkeypatch.delenv("OPEN_TAVERN_TOKEN", raising=False)
     client = _authed_app(storage)
