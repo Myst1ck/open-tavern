@@ -81,7 +81,7 @@ Open the printed URL (default `http://localhost:5173`).
 docker compose up --build
 ```
 
-- Backend container binds `0.0.0.0` internally; host port `127.0.0.1:8000` (loopback only).
+- Backend container binds `0.0.0.0` internally; host port binds the machine's Tailscale IP (`docker-compose.yml`) — reachable over Tailscale, not LAN. Substitute your own Tailscale IP (`tailscale ip -4`).
 - Non-root user, `restart: unless-stopped`, SQLite in `backend-data` volume.
 - Frontend waits on backend health (`depends_on: service_healthy`); backend `HEALTHCHECK` = `GET /sessions` (auth-exempt).
 - `OPENAI_API_KEY` optional — app starts without it; AI calls return 503 until set.

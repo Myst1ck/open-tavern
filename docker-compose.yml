@@ -3,7 +3,7 @@ services:
     build: ./backend
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8000:8000"
+      - "100.88.11.28:8000:8000"
     environment:
       # Optional: pass through when set. Backend starts without it; OpenAI
       # features return 503 until a key is supplied.
