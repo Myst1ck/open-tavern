@@ -1,8 +1,8 @@
 """Bearer-token auth middleware and startup-config guard tests.
 
 Auth is opt-in: it only enforces when ``OPEN_TAVERN_TOKEN`` is set. Startup
-validation (:func:`open_tavern.api.main.validate_startup_config`) refuses to
-start without an OpenAI key, and refuses a tokenless non-localhost bind.
+validation (:func:`open_tavern.api.main.validate_startup_config`) refuses a
+tokenless non-localhost bind; ``OPENAI_API_KEY`` is optional.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from open_tavern.api.main import create_app, validate_startup_config
-from open_tavern.api.routes import get_storage
+from open_tavern.api.routes import get_client, get_storage
 from open_tavern.storage import Storage
 
 
@@ -97,12 +97,23 @@ def test_no_token_configured_serves_open(monkeypatch, storage):
 # --- startup config guard ------------------------------------------------
 
 
-def test_startup_refuses_without_openai_key(monkeypatch):
+def test_startup_passes_without_openai_key(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setenv("OPEN_TAVERN_TOKEN", "sekrit")
 
-    with pytest.raises(RuntimeError, match="OPENAI_API_KEY"):
-        validate_startup_config()
+    validate_startup_config()  # key is optional; must not raise
+
+
+def test_openai_request_503_without_key(monkeypatch, storage):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPEN_TAVERN_TOKEN", raising=False)
+    get_client.cache_clear()
+    client = _authed_app(storage)
+
+    resp = client.post("/sessions/any/character", json={"description": "elf"})
+
+    assert resp.status_code == 503
+    assert "OPENAI_API_KEY" in resp.json()["detail"]
 
 
 def test_startup_refuses_tokenless_nonlocal_bind(monkeypatch):

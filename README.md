@@ -48,7 +48,7 @@ Set environment variables:
 
 | Variable        | Default                     | Description                       |
 |-----------------|-----------------------------|-----------------------------------|
-| `OPENAI_API_KEY`  | *(required)*              | Your OpenAI-compatible API key. Compose refuses to start without it |
+| `OPENAI_API_KEY`  | *(optional)*              | Your OpenAI-compatible API key. Optional — AI calls fail with 503 until set |
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Provider base URL. Env-only — `X-Base-URL` header not honored |
 | `OPENAI_MODEL`    | `gpt-4o-mini`             | Model to call                     |
 | `OPEN_TAVERN_DB`  | `open_tavern.db`          | SQLite file path (optional)       |
@@ -84,7 +84,7 @@ docker compose up --build
 - Backend container binds `0.0.0.0` internally; host port `127.0.0.1:8000` (loopback only).
 - Non-root user, `restart: unless-stopped`, SQLite in `backend-data` volume.
 - Frontend waits on backend health (`depends_on: service_healthy`); backend `HEALTHCHECK` = `GET /sessions` (auth-exempt).
-- `OPENAI_API_KEY` required — compose refuses without it.
+- `OPENAI_API_KEY` optional — app starts without it; AI calls return 503 until set.
 
 ## Manual play flow
 

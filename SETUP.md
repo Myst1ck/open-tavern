@@ -1,6 +1,6 @@
 # Open Tavern — SETUP / Bring-Up Playbook
 
-Authoritative bring-up doc. Fresh machine → follow this. Generated 2026-08-28 by `/up`. Refreshed 2026-09-08 by `/up` — verified bring-up, all endpoints 200. Refreshed 2026-09-11 — auth/bind/proxy env vars, compose runtime, migration runner documented.
+Authoritative bring-up doc. Fresh machine → follow this. Generated 2026-08-28 by `/up`. Refreshed 2026-09-08 by `/up` — verified bring-up, all endpoints 200. Refreshed 2026-09-11 — auth/bind/proxy env vars, compose runtime, migration runner documented. Refreshed 2026-09-20 — SELinux `:Z` volume, uid 10001 ownership fix, token requirement under compose, frontend `Created`-state quirk.
 
 ## Architecture
 
@@ -18,7 +18,7 @@ Docker/Podman available. No separate DB/cache/queue services. Two containers tot
 | Service  | Access URL            | Health endpoint                | Healthy response                          |
 |----------|-----------------------|--------------------------------|-------------------------------------------|
 | Backend  | http://<host-ip>:8000 | `GET /sessions` → 200          | JSON array of session summaries           |
-| Backend  | http://<host-ip>:8000/docs | `GET /docs` → 200          | Swagger UI                                |
+| Backend  | http://<host-ip>:8000/docs | `GET /docs` → 200 (401 when token set) | Swagger UI |
 | Frontend | http://<host-ip>:5173 | `GET /` → 200                  | Vite-served HTML                          |
 
 Backend binds `127.0.0.1` by default (`OPEN_TAVERN_BIND_HOST`, loopback only); frontend dev server binds `0.0.0.0`. Reachable at `http://localhost:<port>` locally, `http://<host-ip>:<port>` on LAN when bound to `0.0.0.0`.
@@ -31,11 +31,11 @@ Note: no root `/` API route — `/` on :8000 returns 404 by design. Use `/sessio
 
 | Variable           | Default                    | Required | Description                        |
 |--------------------|----------------------------|----------|------------------------------------|
-| `OPENAI_API_KEY`   | —                          | **yes**  | OpenAI-compatible API key. Compose refuses to start without it (`${OPENAI_API_KEY:?err}`); bare uvicorn boots but AI calls fail |
+| `OPENAI_API_KEY`   | —                          | no       | OpenAI-compatible API key. Optional — app starts without it; AI calls return 503 until set (env or app config) |
 | `OPENAI_BASE_URL`  | `https://api.openai.com/v1`| no       | Provider base URL. Env-only — `X-Base-URL` header removed, not honored |
 | `OPENAI_MODEL`     | `gpt-4o-mini`              | no       | Model to call                      |
 | `OPEN_TAVERN_DB`   | `open_tavern.db`           | no       | SQLite file path (relative to cwd) |
-| `OPEN_TAVERN_TOKEN`| — (unset)                  | no*      | Bearer token for API auth. Unset + localhost bind → warning; unset + non-localhost bind → startup refused |
+| `OPEN_TAVERN_TOKEN`| — (unset)                  | yes*     | Bearer token for API auth. Unset + localhost bind → warning; unset + non-localhost bind → startup refused. Compose sets `OPEN_TAVERN_BIND_HOST=0.0.0.0`, so compose runs REQUIRE it. Generate: `openssl rand -hex 32`, put in root `.env` (compose interpolation) |
 | `OPEN_TAVERN_BIND_HOST` | `127.0.0.1`          | no       | uvicorn bind host. Compose sets `0.0.0.0` (container network); host port stays `127.0.0.1` |
 | `OPEN_TAVERN_TRUST_PROXY` | — (unset)          | no       | `=1` trusts `X-Forwarded-For` for rate-limit client keys. Default off — header ignored |
 | `OPEN_TAVERN_ALLOWED_ORIGINS` | `http://localhost:3000` | no       | Comma-separated CORS origins. Add `http://<host-ip>:5173` for remote browser access |
@@ -46,7 +46,7 @@ Note: no root `/` API route — `/` on :8000 returns 404 by design. Use `/sessio
 |----------------------|----------------------------|----------|-------------------------|
 | `VITE_API_BASE_URL` | `http://<browser-host>:8000` | no       | Backend base URL (default: same host as page, port 8000 — no override needed for LAN/Tailscale). Key present in `.env.example` as commented-out line; leave unset for host-derived default |
 
-Backend has no `.env` file — export vars or run with env. Compose refuses to start without `OPENAI_API_KEY`; bare uvicorn boots but AI features (character generation, GM narration) fail at call time.
+Backend has no `.env` file — export vars or run with env. `OPENAI_API_KEY` optional — app boots without it; AI features (character generation, GM narration) fail with 503 until key set via env or app config. Note: `podman-compose` reads a root `.env` for variable interpolation (e.g. `OPEN_TAVERN_TOKEN`) — that is compose-level, not a backend loader.
 
 ## Install
 
@@ -80,6 +80,7 @@ npm run dev -- --host 0.0.0.0 --port 5173
 
 > Uses Podman (not Docker). `podman-compose` required.
 > ⚠️ Use `podman-compose` (Python package), NOT `podman compose` (delegates to docker-compose, broken socket). If containers fail with no clear error, check you're running the right command.
+> ⚠️ podman-compose 1.5.0 may print `Build command failed` after a HEALTHCHECK OCI-format warning. Non-fatal — verify image tagged (`podman images`) before treating as failure.
 
 ### Quick start
 
@@ -99,6 +100,12 @@ podman-compose build
 
 ```bash
 podman-compose up --build -d
+```
+
+Frontend quirk: podman-compose may leave `open-tavern_frontend_1` in `Created` state (gated on backend health) even after backend healthy. Workaround:
+
+```bash
+podman start open-tavern_frontend_1
 ```
 
 ### Stop containers
@@ -123,6 +130,14 @@ SQLite DB lives in the `backend-data` volume (`docker-compose.yml` line 13). Dat
 - DB path inside container: `/data/open_tavern.db`
 - `OPEN_TAVERN_DB` env var set to `/data/open_tavern.db` (line 10)
 
+**SELinux (Enforcing host):** volume mount MUST be `backend-data:/data:Z`. Without `:Z`, `container_t` denied write → sqlite readonly error.
+
+**Volume ownership:** container runs `appuser` uid 10001. If DB file owned by other uid → `sqlite3.OperationalError: attempt to write a readonly database`. Fix:
+
+```bash
+podman unshare chown -R 10001:10001 /home/omera/.local/share/containers/storage/volumes/open-tavern_backend-data/_data
+```
+
 To inspect the DB from the host:
 
 ```bash
@@ -135,7 +150,8 @@ podman cp $(podman-compose ps -q backend):/data/open_tavern.db ./open_tavern.db
 
 - `docker compose up --build` (or `podman-compose up --build`) builds and starts both containers.
 - Backend container binds `0.0.0.0` internally (compose sets `OPEN_TAVERN_BIND_HOST=0.0.0.0` so the frontend container reaches it over the docker network); host port mapped to `127.0.0.1:8000` only — not exposed on LAN.
-- Runs as non-root user `appuser` (uid 10001); SQLite volume `backend-data` mounted at `/data`.
+- `OPEN_TAVERN_TOKEN` REQUIRED under compose (non-localhost bind). Backend refuses start without it. Set in root `.env`; frontend user pastes token into Settings panel (sent as `X-API-Key` header, stored in `localStorage`).
+- Runs as non-root user `appuser` (uid 10001); SQLite volume `backend-data` mounted at `/data` with `:Z` (SELinux).
 - `restart: unless-stopped` on both services.
 - Frontend `depends_on: backend: condition: service_healthy` — waits for backend health before starting.
 - Backend `HEALTHCHECK` hits `GET /sessions` (auth-exempt) every 30s.
@@ -173,6 +189,8 @@ curl -s -o /dev/null -w "%{http_code}\n" http://<host-ip>:5173/           # expe
 `<host-ip>` = LAN IP of machine (e.g. `192.168.1.213`). `localhost` works for local access.
 
 `GET /sessions` is auth-exempt — no `OPEN_TAVERN_TOKEN` needed. Backend `Dockerfile` HEALTHCHECK and compose `depends_on: service_healthy` both use it.
+
+`GET /docs` returns 401 when token set — expected (auth-protected), not an outage. Use `GET /sessions` → 200 as the health check.
 
 ## Verify End-to-End
 
@@ -218,9 +236,9 @@ Remote over internet (not LAN) also needs router port-forwarding to this machine
 ## Manual Steps Remaining
 
 1. **Set `OPENAI_API_KEY`** (and optionally `OPENAI_BASE_URL`/`OPENAI_MODEL`) in the
-   backend process env. Compose refuses to start without it; bare uvicorn boots but AI
-   features unavailable. Export before starting uvicorn — app reads process env only
-   (no `.env` loader).
+   backend process env. Optional — app boots without it; AI features (character
+   generation, GM narration) return 503 until set. Export before starting uvicorn — app
+   reads process env only (no `.env` loader).
 2. No seed data required — empty DB works. 2 dev sessions present in `open_tavern.db`
    (1 `up-verify` session added during 2026-09-01 `/up` verification POST /sessions; older
    dev sessions cleaned since last refresh).
