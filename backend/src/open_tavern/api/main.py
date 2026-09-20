@@ -57,12 +57,11 @@ def _is_localhost_bind(host: str) -> bool:
 def validate_startup_config() -> None:
     """Refuse to start when the deployment would be unsafe.
 
-    Raises ``RuntimeError`` when:
+    ``OPENAI_API_KEY`` is optional: the app starts without it and only
+    OpenAI-dependent requests fail (HTTP 503) until a key is supplied.
 
-    * ``OPENAI_API_KEY`` is missing or empty — the API cannot function without
-      an LLM credential.
-    * ``OPEN_TAVERN_TOKEN`` is unset while the server binds a non-localhost
-      interface — an unauthenticated, network-exposed API.
+    Raises ``RuntimeError`` when ``OPEN_TAVERN_TOKEN`` is unset while the server
+    binds a non-localhost interface — an unauthenticated, network-exposed API.
 
     Logs a warning (does not raise) when ``OPEN_TAVERN_TOKEN`` is unset but the
     bind is localhost-only, which is acceptable for local development.
@@ -71,11 +70,6 @@ def validate_startup_config() -> None:
     ``127.0.0.1``); the uvicorn ``--host`` flag must match it. ``docker-compose``
     sets it to ``0.0.0.0`` so the policy reflects the container's real exposure.
     """
-    if not os.environ.get("OPENAI_API_KEY", "").strip():
-        raise RuntimeError(
-            "OPENAI_API_KEY is not set; refusing to start. "
-            "Set OPENAI_API_KEY to your OpenAI-compatible API key."
-        )
     token = os.environ.get("OPEN_TAVERN_TOKEN", "").strip()
     if token:
         return

@@ -113,10 +113,21 @@ def get_per_request_client(
     ``OPENAI_BASE_URL`` and never read from headers. Without any recognized
     header the shared environment client (or its dependency-override test
     fake) is used unchanged.
+
+    Raises ``HTTPException`` 503 when the resolved client is a real
+    :class:`OpenAIClient` with no API key — the app starts without a key, so
+    only OpenAI-dependent requests fail until one is configured.
     """
     if not (x_api_key or x_model):
-        return env_client
-    return build_client_from_headers(x_api_key, x_model)
+        client: ChatClient = env_client
+    else:
+        client = build_client_from_headers(x_api_key, x_model)
+    if isinstance(client, OpenAIClient) and not client.api_key.strip():
+        raise HTTPException(
+            status_code=503,
+            detail="OPENAI_API_KEY not configured",
+        )
+    return client
 
 
 @lru_cache

@@ -5,7 +5,9 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY:?OPENAI_API_KEY is required — set it in the environment or .env before starting}
+      # Optional: pass through when set. Backend starts without it; OpenAI
+      # features return 503 until a key is supplied.
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
       - OPEN_TAVERN_DB=/data/open_tavern.db
@@ -17,7 +19,7 @@ services:
       # it over the docker network; the host port is bound to 127.0.0.1 above.
       - OPEN_TAVERN_BIND_HOST=0.0.0.0
     volumes:
-      - backend-data:/data
+      - backend-data:/data:Z
 
   frontend:
     build: ./frontend
