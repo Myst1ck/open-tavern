@@ -3,4 +3,10 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   plugins: [react()],
+  server: {
+    allowedHosts: ["brain"],
+  },
+  preview: {
+    allowedHosts: ["brain"],
+  },
 });
