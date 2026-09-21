@@ -1,4 +1,4 @@
-FROM node:20-slim
+FROM node:22-slim
 
 WORKDIR /app
 
@@ -6,7 +6,7 @@ WORKDIR /app
 RUN corepack enable
 
 # Install dependencies first (cache layer)
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 
 # Copy source
@@ -18,4 +18,4 @@ RUN pnpm build
 EXPOSE 5173
 
 # Serve built assets
-CMD ["pnpm", "preview", "--", "--host", "0.0.0.0", "--port", "5173"]
+CMD ["pnpm", "exec", "vite", "preview", "--host", "0.0.0.0", "--port", "5173"]
