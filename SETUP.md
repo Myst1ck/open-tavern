@@ -1,13 +1,13 @@
 # Open Tavern — SETUP / Bring-Up Playbook
 
-Authoritative bring-up doc. Fresh machine → follow this. Generated 2026-08-28 by `/up`. Refreshed 2026-09-08 by `/up` — verified bring-up, all endpoints 200. Refreshed 2026-09-11 — auth/bind/proxy env vars, compose runtime, migration runner documented. Refreshed 2026-09-20 — SELinux `:Z` volume, uid 10001 ownership fix, token requirement under compose, frontend `Created`-state quirk. Refreshed 2026-09-20 (later) — backend host port now binds Tailscale IP (not loopback), CORS middleware order fix, podman-compose stale-image gotcha. Refreshed 2026-09-20 — start flow now world generation (textarea → Generate World → preview → Accept) before character creation.
+Authoritative bring-up doc. Fresh machine → follow this. Generated 2026-08-28 by `/up`. Refreshed 2026-09-08 by `/up` — verified bring-up, all endpoints 200. Refreshed 2026-09-11 — auth/bind/proxy env vars, compose runtime, migration runner documented. Refreshed 2026-09-20 — SELinux `:Z` volume, uid 10001 ownership fix, token requirement under compose, frontend `Created`-state quirk. Refreshed 2026-09-20 (later) — backend host port now binds Tailscale IP (not loopback), CORS middleware order fix, podman-compose stale-image gotcha. Refreshed 2026-09-20 — start flow now world generation (textarea → Generate World → preview → Accept) before character creation. Refreshed 2026-09-21 — frontend image build chain fixed (pnpm pin, Node 22 base, workspace COPY, .dockerignore, preview CMD); both images rebuilt, endpoints 200.
 
 ## Architecture
 
 | Layer    | Tech                              | Port | Notes                          |
 |----------|-----------------------------------|------|--------------------------------|
 | Backend  | Python 3.13+ / FastAPI / uvicorn  | 8000 | API + game engine + SQLite     |
-| Frontend | React 19 / Vite 6 / TypeScript    | 5173 | Chat UI (dev server)           |
+| Frontend | React 19 / Vite 6 / TypeScript    | 5173 | Chat UI (vite preview, built dist) |
 | Storage  | SQLite (stdlib `sqlite3`)         | —    | File `backend/open_tavern.db`  |
 | AI       | OpenAI-compatible chat client     | —    | BYO key, see env vars          |
 
@@ -95,6 +95,12 @@ npm run dev -- --host 0.0.0.0 --port 5173
 > ⚠️ Use `podman-compose` (Python package), NOT `podman compose` (delegates to docker-compose, broken socket). If containers fail with no clear error, check you're running the right command.
 > ⚠️ podman-compose 1.5.0 may print `Build command failed` after a HEALTHCHECK OCI-format warning. Non-fatal — verify image tagged (`podman images`) before treating as failure.
 > ⚠️ **Stale image:** `podman-compose up -d --build backend` may build a new image but NOT recreate the container — the running container keeps the old image. Fix: `podman rm -f <container>` then `podman-compose up -d <service>`. Verify the container's image: `podman inspect <container> --format '{{.Image}}'`.
+> ⚠️ **Frontend build chain (fixed 2026-09-21, keep these invariants):** frontend image builds with pnpm, not npm. Four things must stay true or build fails:
+> 1. `frontend/package.json` pins `"packageManager": "pnpm@11.22.0"` — bare `corepack enable` fetches latest pnpm (12.x), which hard-fails install with `ERR_PNPM_IGNORED_BUILDS`.
+> 2. pnpm 11 requires Node ≥22.13 (`node:sqlite` builtin) — Dockerfile base MUST be `node:22-slim`, not node:20.
+> 3. Dockerfile `COPY` must include `pnpm-workspace.yaml` (holds `allowBuilds: esbuild: true`); omitting it → `ERR_PNPM_IGNORED_BUILDS` again.
+> 4. `frontend/.dockerignore` must exclude `node_modules`, `dist`, `*.tsbuildinfo`, `.env` — compose build context is `./frontend`, root `.dockerignore` does not apply; host `node_modules` copied in makes `pnpm build` abort (`ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`).
+> ⚠️ **Frontend CMD:** `pnpm preview -- --host ...` is broken — pnpm passes `--` through to the script, vite treats it as end-of-options and binds localhost:4173 (container port 5173 dead, curl 000). Correct CMD: `pnpm exec vite preview --host 0.0.0.0 --port 5173`.
 
 ### Quick start
 
@@ -175,7 +181,9 @@ podman cp $(podman-compose ps -q backend):/data/open_tavern.db ./open_tavern.db
 | File | Purpose |
 |------|---------|
 | `backend/Dockerfile` | Python 3.13-slim, installs deps, runs uvicorn on `0.0.0.0:8000` |
-| `frontend/Dockerfile` | Node 20-slim, installs npm deps, runs Vite dev on `0.0.0.0:5173` |
+| `frontend/Dockerfile` | Node 22-slim, pnpm 11.22.0 (corepack via `packageManager` pin), builds dist, serves via `vite preview` on `0.0.0.0:5173` |
+| `frontend/.dockerignore` | Excludes `node_modules`, `dist`, `*.tsbuildinfo`, `.env` from frontend build context |
+| `frontend/pnpm-workspace.yaml` | `allowBuilds: esbuild: true` — required inside image (Dockerfile COPY) or pnpm install fails |
 | `docker-compose.yml` | Defines `backend` + `frontend` services, `backend-data` volume, port mappings |
 | `.dockerignore` | Excludes `.git`, `node_modules`, `.env`, `*.md`, Dockerfiles from build context |
 
