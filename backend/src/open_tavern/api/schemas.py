@@ -9,7 +9,7 @@ Tuples and frozensets become lists so the payloads encode cleanly.
 from __future__ import annotations
 
 from dataclasses import asdict
-from typing import Any
+from typing import Annotated, Any
 
 from pydantic import BaseModel, Field
 
@@ -18,18 +18,20 @@ from open_tavern.state import GameState
 from open_tavern.story import RollOutcome
 
 
-class BrainstormRequest(BaseModel):
-    """Request body for the stateless brainstorm chat.
+class WorldGenerateRequest(BaseModel):
+    """Request body for stateless world generation from a description.
 
-    ``messages`` is the conversation so far, each item
-    ``{"role": "user" | "assistant", "content": "..."}``. Nothing is persisted.
+    ``description`` is the player's free-text world idea; ``surprise`` asks the
+    LLM to invent a world when no description is given. At least one of the two
+    must be supplied — the route returns 422 otherwise.
     """
 
-    messages: list[dict[str, str]]
+    description: str | None = Field(default=None, max_length=2000)
+    surprise: bool = False
 
 
-class BrainstormResponse(BaseModel):
-    """Response carrying a campaign theme and premise distilled from the chat."""
+class WorldGenerateResponse(BaseModel):
+    """Response carrying a generated campaign theme and premise."""
 
     theme: str
     premise: str
@@ -40,7 +42,7 @@ class CreateSessionRequest(BaseModel):
 
     world_theme: str = Field(max_length=200)
     title: str | None = Field(default=None, max_length=200)
-    premise: str | None = None
+    premise: str | None = Field(default=None, max_length=2000)
 
 
 class CreateSessionResponse(BaseModel):
@@ -199,7 +201,9 @@ class CreateItemRequest(BaseModel):
     name: str = Field(max_length=200)
     type: str | None = Field(default=None, max_length=50)
     stats: dict[str, Any] | None = None
-    tags: list[str] | None = None
+    tags: list[Annotated[str, Field(max_length=50)]] | None = Field(
+        default=None, max_length=20
+    )
     description: str | None = Field(default=None, max_length=2000)
 
 

@@ -21,7 +21,6 @@ import {
   unequipItem,
   useItem as callUseItem,
 } from "./api";
-import BrainstormView from "./components/BrainstormView";
 import CharacterCreationView from "./components/CharacterCreationView";
 import CharacterSheetView from "./components/CharacterSheet";
 import Chat, { type Message } from "./components/Chat";
@@ -32,8 +31,9 @@ import ItemTooltip from "./components/ItemTooltip";
 import SavedTalesList from "./components/SavedTalesList";
 import SettingsPanel from "./components/SettingsPanel";
 import StateView from "./components/StateView";
+import WorldGenView from "./components/WorldGenView";
 
-type Phase = "start" | "character" | "play";
+type Phase = "world" | "character" | "play";
 
 function toMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -62,7 +62,7 @@ function isCharacterSheet(
 }
 
 export default function App() {
-  const [phase, setPhase] = useState<Phase>("start");
+  const [phase, setPhase] = useState<Phase>("world");
   const [session, setSession] = useState<Session | null>(null);
   const [character, setCharacter] = useState<CharacterSheet | null>(null);
   const [state, setState] = useState<GameState | null>(null);
@@ -180,12 +180,26 @@ export default function App() {
     try {
       const created = await createSession(worldTheme, undefined, premise);
       setSession(created);
+      // A fresh session resets any character progress from a prior world.
+      setCharacter(null);
+      setState(null);
+      setMessages([]);
       setPhase("character");
     } catch (err) {
       setError(toMessage(err));
     } finally {
       setBusy(false);
     }
+  };
+
+  const handleBackToWorld = () => {
+    // Abandon the pending session; accepting a world creates a new one.
+    setSession(null);
+    setCharacter(null);
+    setState(null);
+    setMessages([]);
+    setError(null);
+    setPhase("world");
   };
 
   const handleCharacterCreated = async (character: CharacterSheet) => {
@@ -275,7 +289,7 @@ export default function App() {
     setState(null);
     setMessages([]);
     setError(null);
-    setPhase("start");
+    setPhase("world");
     void refreshSessions();
   };
 
@@ -304,6 +318,9 @@ export default function App() {
       setState(response.state);
       setCharacter(response.state.character);
     } catch (err) {
+      // Roll back the optimistic player message so a failed action does not
+      // leave a dangling turn in the transcript.
+      setMessages((prev) => prev.filter((m) => m.id !== playerMessage.id));
       setError(toMessage(err));
     } finally {
       setBusy(false);
@@ -321,10 +338,10 @@ export default function App() {
         )}
       </header>
       <main className="app-main">
-        {phase === "start" && (
+        {phase === "world" && (
           <>
             <SettingsPanel initial={settings} onSave={handleSaveSettings} />
-            <BrainstormView onBegin={handleStart} />
+            <WorldGenView onAccept={handleStart} />
             <SavedTalesList
               sessions={sessions}
               busy={sessionsBusy}
@@ -339,6 +356,7 @@ export default function App() {
           <CharacterCreationView
             sessionId={session.session_id}
             onCharacterCreated={handleCharacterCreated}
+            onBack={handleBackToWorld}
           />
         )}
         {phase === "play" && (

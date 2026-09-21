@@ -17,6 +17,12 @@ const SETTINGS_KEY = "open-tavern-settings";
 /** Abort in-flight fetches after this long to avoid hanging requests. */
 const REQUEST_TIMEOUT_MS = 30_000;
 
+/**
+ * LLM-backed endpoints can take far longer than cheap reads; give them a
+ * generous ceiling so generation is not aborted mid-flight.
+ */
+const LLM_TIMEOUT_MS = 120_000;
+
 export interface TavernSettings {
   apiKey: string;
   baseUrl: string;
@@ -223,9 +229,13 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function request<T>(
+  path: string,
+  init: RequestInit = {},
+  timeoutMs: number = REQUEST_TIMEOUT_MS,
+): Promise<T> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(`${API_BASE_URL}${path}`, {
       ...init,
@@ -360,10 +370,14 @@ export function createCharacter(
     typeof payloadOrDescription === "string"
       ? { description: payloadOrDescription }
       : payloadOrDescription;
-  return request<CharacterResponse>(`/sessions/${sessionId}/character`, {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
+  return request<CharacterResponse>(
+    `/sessions/${sessionId}/character`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+    LLM_TIMEOUT_MS,
+  );
 }
 
 /**
@@ -374,10 +388,14 @@ export function refineCharacter(
   sessionId: string,
   payload: RefinePayload,
 ): Promise<RefineResponse> {
-  return request<RefineResponse>(`/sessions/${sessionId}/character/refine`, {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
+  return request<RefineResponse>(
+    `/sessions/${sessionId}/character/refine`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+    LLM_TIMEOUT_MS,
+  );
 }
 
 /**
@@ -393,6 +411,7 @@ export function generateClass(
       method: "POST",
       body: JSON.stringify({ class_concept: classConcept }),
     },
+    LLM_TIMEOUT_MS,
   );
 }
 
@@ -400,33 +419,45 @@ export function sendAction(
   sessionId: string,
   action: string,
 ): Promise<ActionResponse> {
-  return request<ActionResponse>(`/sessions/${sessionId}/actions`, {
-    method: "POST",
-    body: JSON.stringify({ action }),
-  });
+  return request<ActionResponse>(
+    `/sessions/${sessionId}/actions`,
+    {
+      method: "POST",
+      body: JSON.stringify({ action }),
+    },
+    LLM_TIMEOUT_MS,
+  );
 }
 
 export function getState(sessionId: string): Promise<StateResponse> {
   return request<StateResponse>(`/sessions/${sessionId}/state`);
 }
 
-// ── Brainstorm API types ────────────────────────────────────────
+// ── World generation API types ──────────────────────────────────
 
-export interface BrainstormResponse {
+export interface WorldGenResponse {
   theme: string;
   premise: string;
 }
 
-// ── Brainstorm API functions ────────────────────────────────────
+// ── World generation API functions ──────────────────────────────
 
 /**
- * Generate a conversational theme + premise from a chat transcript.
+ * Generate a world theme + premise from a free-text description.
+ * Pass `surprise` to let the backend invent a world from no description.
  */
-export function brainstorm(messages: Message[]): Promise<BrainstormResponse> {
-  return request<BrainstormResponse>("/brainstorm", {
-    method: "POST",
-    body: JSON.stringify({ messages }),
-  });
+export function generateWorld(
+  description: string,
+  surprise = false,
+): Promise<WorldGenResponse> {
+  return request<WorldGenResponse>(
+    "/world/generate",
+    {
+      method: "POST",
+      body: JSON.stringify({ description, surprise }),
+    },
+    LLM_TIMEOUT_MS,
+  );
 }
 
 // ── Item API types ──────────────────────────────────────────────

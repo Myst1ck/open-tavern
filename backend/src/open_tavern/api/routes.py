@@ -22,8 +22,6 @@ from open_tavern.api.ratelimit import RateLimiter
 from open_tavern.api.schemas import (
     ActionRequest,
     ActionResponse,
-    BrainstormRequest,
-    BrainstormResponse,
     CharacterRequest,
     CharacterResponse,
     ClassRequest,
@@ -40,6 +38,8 @@ from open_tavern.api.schemas import (
     SessionDetail,
     SessionSummary,
     StateResponse,
+    WorldGenerateRequest,
+    WorldGenerateResponse,
     character_to_dict,
     roll_to_dict,
     state_to_dict,
@@ -57,7 +57,7 @@ from open_tavern.story import (
 )
 from open_tavern.story.character_gen import _parse_json
 from open_tavern.story.client import LLMClientError
-from open_tavern.story.prompts import brainstorm_prompt
+from open_tavern.story.prompts import world_gen_prompt
 from open_tavern.story.refine import refine_prose
 
 
@@ -172,10 +172,13 @@ _action_limiter = RateLimiter(max_requests=10, window_seconds=60.0)
 _character_limiter = RateLimiter(max_requests=5, window_seconds=60.0)
 #: Limits for unauthenticated lifecycle endpoints (resource exhaustion guard).
 _create_limiter = RateLimiter(max_requests=30, window_seconds=60.0)
-_brainstorm_limiter = RateLimiter(max_requests=30, window_seconds=60.0)
+#: Limits for the stateless world-generation endpoint (paid LLM call).
+_world_limiter = RateLimiter(max_requests=30, window_seconds=60.0)
 _delete_limiter = RateLimiter(max_requests=10, window_seconds=60.0)
 #: Limits for item CRUD operations.
 _item_limiter = RateLimiter(max_requests=30, window_seconds=60.0)
+#: Shared limit for cheap read endpoints (list/get) — scraping guard.
+_read_limiter = RateLimiter(max_requests=120, window_seconds=60.0)
 
 #: Per-session locks serialize read-modify-write of a single session's state so
 #: concurrent actions cannot lose updates. Keyed by session id.
@@ -348,36 +351,37 @@ def create_character(
     """
     _ensure_session(storage, session_id)
     _enforce_rate_limit(request, _character_limiter, "character")
-    session_meta = storage.load_session(session_id)
-    premise = session_meta.get("premise") if session_meta else None
-    try:
-        sheet, opening, scene = generate_character(
-            body.description or "",
-            client,
-            name=body.name or "",
-            race=body.race or "",
-            class_concept=body.class_concept or "",
-            backstory=body.backstory or "",
-            personality=body.personality or "",
-            appearance=body.appearance or "",
-            motivation=body.motivation or "",
-            class_name=body.class_name or "",
-            class_hit_die=body.class_hit_die,
-            class_description=body.class_description or "",
-            premise=premise,
-        )
-    except CharacterGenerationError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    except LLMClientError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    storage.save_character(session_id, sheet)
-    state = new_state(sheet)
-    if scene:
-        state = replace(state, scene=scene)
-    storage.save_state(session_id, state)
-    _cache_state(session_id, state)
-    if opening:
-        storage.append_message(session_id, "assistant", opening)
+    with _session_lock_ctx(session_id):
+        session_meta = storage.load_session(session_id)
+        premise = session_meta.get("premise") if session_meta else None
+        try:
+            sheet, opening, scene = generate_character(
+                body.description or "",
+                client,
+                name=body.name or "",
+                race=body.race or "",
+                class_concept=body.class_concept or "",
+                backstory=body.backstory or "",
+                personality=body.personality or "",
+                appearance=body.appearance or "",
+                motivation=body.motivation or "",
+                class_name=body.class_name or "",
+                class_hit_die=body.class_hit_die,
+                class_description=body.class_description or "",
+                premise=premise,
+            )
+        except CharacterGenerationError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except LLMClientError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        storage.save_character(session_id, sheet)
+        state = new_state(sheet)
+        if scene:
+            state = replace(state, scene=scene)
+        storage.save_state(session_id, state)
+        _cache_state(session_id, state)
+        if opening:
+            storage.append_message(session_id, "assistant", opening)
     return CharacterResponse(character=character_to_dict(sheet), opening=opening)
 
 
@@ -409,24 +413,31 @@ def create_class_preview(
 
 
 @router.post(
-    "/brainstorm",
-    response_model=BrainstormResponse,
+    "/world/generate",
+    response_model=WorldGenerateResponse,
 )
-def brainstorm(
-    body: BrainstormRequest,
+def generate_world(
+    body: WorldGenerateRequest,
     request: Request,
     client: ChatClient = Depends(get_per_request_client),
-) -> BrainstormResponse:
-    """Distill a pre-game brainstorm chat into theme + premise (stateless).
+) -> WorldGenerateResponse:
+    """Expand a world description into theme + premise (stateless).
 
-    Prepend the brainstorm system prompt to the conversation, ask the LLM for
-    a JSON ``{"theme", "premise"}`` object, and parse it. Nothing is persisted;
-    any LLM or parse failure surfaces as 502.
+    Requires a non-empty ``description`` unless ``surprise`` is set; otherwise
+    422. Nothing is persisted; any LLM or parse failure surfaces as 502.
     """
-    _enforce_rate_limit(request, _brainstorm_limiter, "brainstorm")
-    messages = [{"role": "system", "content": brainstorm_prompt()}, *body.messages]
+    description = (body.description or "").strip()
+    if not description and not body.surprise:
+        raise HTTPException(
+            status_code=422,
+            detail="description is required unless surprise is true",
+        )
+    _enforce_rate_limit(request, _world_limiter, "world")
+    prompt = world_gen_prompt(description, surprise=body.surprise)
     try:
-        data = _parse_json(client.chat(messages, temperature=0.8))
+        data = _parse_json(
+            client.chat([{"role": "user", "content": prompt}], json_mode=True)
+        )
     except (LLMClientError, CharacterGenerationError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     if not isinstance(data, dict):
@@ -437,7 +448,7 @@ def brainstorm(
         raise HTTPException(
             status_code=502, detail="LLM response missing theme or premise"
         )
-    return BrainstormResponse(theme=theme.strip(), premise=premise.strip())
+    return WorldGenerateResponse(theme=theme.strip(), premise=premise.strip())
 
 
 @router.post(
@@ -503,11 +514,13 @@ def send_action(
     _enforce_rate_limit(request, _action_limiter, "action")
 
     with _session_lock_ctx(session_id):
+        # Re-check under the lock: a delete queued ahead of this action would
+        # otherwise surface as 409 (missing character) instead of 404.
+        _ensure_session(storage, session_id)
         character = _require_character(storage, session_id)
         state = _current_state(storage, session_id, character)
         history = storage.load_messages(session_id)
-        session_meta = storage.load_session(session_id)
-        premise = session_meta.get("premise") if session_meta else None
+        premise = storage.session_premise(session_id)
 
         try:
             result = turn(body.action, state, history, client, premise=premise)
@@ -532,9 +545,11 @@ def send_action(
 )
 def get_state(
     session_id: str,
+    request: Request,
     storage: Storage = Depends(get_storage),
 ) -> StateResponse:
     """Return the current game state for the session."""
+    _enforce_rate_limit(request, _read_limiter, "read")
     _ensure_session(storage, session_id)
     character = _require_character(storage, session_id)
     state = _current_state(storage, session_id, character)
@@ -543,18 +558,22 @@ def get_state(
 
 @router.get("/sessions", response_model=list[SessionSummary])
 def list_sessions(
+    request: Request,
     storage: Storage = Depends(get_storage),
 ) -> list[SessionSummary]:
     """Return all saved sessions, newest activity first."""
+    _enforce_rate_limit(request, _read_limiter, "read")
     return [SessionSummary(**row) for row in storage.list_sessions()]
 
 
 @router.get("/sessions/{session_id}", response_model=SessionDetail)
 def get_session(
     session_id: str,
+    request: Request,
     storage: Storage = Depends(get_storage),
 ) -> SessionDetail:
     """Return a full resume bundle for ``session_id`` (404 if unknown)."""
+    _enforce_rate_limit(request, _read_limiter, "read")
     meta = _session_summary(storage, session_id)
     character = storage.load_character(session_id)
     if character is None:
@@ -571,9 +590,11 @@ def get_session(
 @router.get("/sessions/{session_id}/messages", response_model=list[dict])
 def get_messages(
     session_id: str,
+    request: Request,
     storage: Storage = Depends(get_storage),
 ) -> list[dict]:
     """Return the ordered ``[{role, content}]`` transcript for a session."""
+    _enforce_rate_limit(request, _read_limiter, "read")
     _ensure_session(storage, session_id)
     return storage.load_messages(session_id)
 
@@ -601,7 +622,7 @@ def delete_session(
     with _session_lock_ctx(session_id):
         if not storage.delete_session(session_id):
             raise HTTPException(status_code=404, detail="session not found")
-    _invalidate_state(session_id)
+        _invalidate_state(session_id)
 
 
 # ── Item Endpoints ────────────────────────────────────────────────────────────

@@ -319,8 +319,8 @@ class Storage:
         """Persist a new session and return its unique id.
 
         ``title`` defaults to ``world_theme`` when omitted or empty.
-        ``premise`` is an optional LLM-generated story premise from the
-        conversational theme brainstorm.
+        ``premise`` is an optional LLM-generated story premise for the
+        campaign setting.
         """
         session_id = uuid4().hex
         now = _now_iso()
@@ -524,6 +524,21 @@ class Storage:
                 "character": self.load_character(session_id),
                 "messages": self.load_messages(session_id),
             }
+
+    def session_premise(self, session_id: str) -> str | None:
+        """Return the stored ``premise`` for ``session_id``, or ``None``.
+
+        Single-column probe for the action path, which only needs the premise
+        and must not pay for the full character JSON and transcript that
+        :meth:`load_session` loads.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT premise FROM sessions WHERE id = ?", (session_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        return row["premise"]
 
     def session_summary(self, session_id: str) -> dict | None:
         """Return a single session summary row, or ``None`` if unknown."""
