@@ -387,6 +387,11 @@ form button {
   margin-top: 0;
 }
 
+.create-tale-card {
+  width: 100%;
+  text-align: left;
+}
+
 h2 {
   margin: 0 0 0.35rem;
   color: var(--accent);

@@ -107,9 +107,6 @@ function settingsHeaders(settings: TavernSettings): Record<string, string> {
   if (settings.apiKey !== "") {
     headers["X-API-Key"] = settings.apiKey;
   }
-  if (settings.baseUrl !== "") {
-    headers["X-Base-URL"] = settings.baseUrl;
-  }
   if (settings.model !== "") {
     headers["X-Model"] = settings.model;
   }

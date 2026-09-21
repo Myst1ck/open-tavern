@@ -24,6 +24,7 @@ import {
 import CharacterCreationView from "./components/CharacterCreationView";
 import CharacterSheetView from "./components/CharacterSheet";
 import Chat, { type Message } from "./components/Chat";
+import CreateTaleCard from "./components/CreateTaleCard";
 import FilterBar, { type FilterState } from "./components/FilterBar";
 import InventoryGrid from "./components/InventoryGrid";
 import ItemModal from "./components/ItemModal";
@@ -33,7 +34,7 @@ import SettingsPanel from "./components/SettingsPanel";
 import StateView from "./components/StateView";
 import WorldGenView from "./components/WorldGenView";
 
-type Phase = "world" | "character" | "play";
+type Phase = "home" | "worldgen" | "character" | "play";
 
 function toMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -62,7 +63,7 @@ function isCharacterSheet(
 }
 
 export default function App() {
-  const [phase, setPhase] = useState<Phase>("world");
+  const [phase, setPhase] = useState<Phase>("home");
   const [session, setSession] = useState<Session | null>(null);
   const [character, setCharacter] = useState<CharacterSheet | null>(null);
   const [state, setState] = useState<GameState | null>(null);
@@ -192,14 +193,24 @@ export default function App() {
     }
   };
 
-  const handleBackToWorld = () => {
+  const handleBackToWorldGen = () => {
     // Abandon the pending session; accepting a world creates a new one.
     setSession(null);
     setCharacter(null);
     setState(null);
     setMessages([]);
     setError(null);
-    setPhase("world");
+    setPhase("worldgen");
+  };
+
+  const handleExitWorldGen = () => {
+    // Leaving world generation discards any pending session/preview state.
+    setSession(null);
+    setCharacter(null);
+    setState(null);
+    setMessages([]);
+    setError(null);
+    setPhase("home");
   };
 
   const handleCharacterCreated = async (character: CharacterSheet) => {
@@ -282,19 +293,19 @@ export default function App() {
     }
   };
 
-  const handleBackToTales = () => {
+  const handleBackToHome = () => {
     // State already saved server-side on every action; just leave play.
     setSession(null);
     setCharacter(null);
     setState(null);
     setMessages([]);
     setError(null);
-    setPhase("world");
+    setPhase("home");
     void refreshSessions();
   };
 
   const handleSendAction = async (action: string) => {
-    if (session === null) {
+    if (session === null || busy) {
       return;
     }
     setBusy(true);
@@ -338,10 +349,11 @@ export default function App() {
         )}
       </header>
       <main className="app-main">
-        {phase === "world" && (
+        {phase === "home" && (
           <>
+            {error !== null && <p className="error">{error}</p>}
             <SettingsPanel initial={settings} onSave={handleSaveSettings} />
-            <WorldGenView onAccept={handleStart} />
+            <CreateTaleCard onCreate={() => setPhase("worldgen")} />
             <SavedTalesList
               sessions={sessions}
               busy={sessionsBusy}
@@ -352,11 +364,17 @@ export default function App() {
             />
           </>
         )}
+        {phase === "worldgen" && (
+          <>
+            {error !== null && <p className="error">{error}</p>}
+            <WorldGenView onAccept={handleStart} onBack={handleExitWorldGen} />
+          </>
+        )}
         {phase === "character" && session !== null && (
           <CharacterCreationView
             sessionId={session.session_id}
             onCharacterCreated={handleCharacterCreated}
-            onBack={handleBackToWorld}
+            onBack={handleBackToWorldGen}
           />
         )}
         {phase === "play" && (
@@ -364,7 +382,7 @@ export default function App() {
             <button
               type="button"
               className="back-button"
-              onClick={handleBackToTales}
+              onClick={handleBackToHome}
             >
               ← Back to tales
             </button>

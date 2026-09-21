@@ -1,6 +1,6 @@
 # Open Tavern — SETUP / Bring-Up Playbook
 
-Authoritative bring-up doc. Fresh machine → follow this. Generated 2026-08-28 by `/up`. Refreshed 2026-09-08 by `/up` — verified bring-up, all endpoints 200. Refreshed 2026-09-11 — auth/bind/proxy env vars, compose runtime, migration runner documented. Refreshed 2026-09-20 — SELinux `:Z` volume, uid 10001 ownership fix, token requirement under compose, frontend `Created`-state quirk. Refreshed 2026-09-20 (later) — backend host port now binds Tailscale IP (not loopback), CORS middleware order fix, podman-compose stale-image gotcha. Refreshed 2026-09-20 — start flow now world generation (textarea → Generate World → preview → Accept) before character creation. Refreshed 2026-09-21 — frontend image build chain fixed (pnpm pin, Node 22 base, workspace COPY, .dockerignore, preview CMD); both images rebuilt, endpoints 200.
+Authoritative bring-up doc. Fresh machine → follow this. Generated 2026-08-28 by `/up`. Refreshed 2026-09-08 by `/up` — verified bring-up, all endpoints 200. Refreshed 2026-09-11 — auth/bind/proxy env vars, compose runtime, migration runner documented. Refreshed 2026-09-20 — SELinux `:Z` volume, uid 10001 ownership fix, token requirement under compose, frontend `Created`-state quirk. Refreshed 2026-09-20 (later) — backend host port now binds Tailscale IP (not loopback), CORS middleware order fix, podman-compose stale-image gotcha. Refreshed 2026-09-20 — start flow now world generation (textarea → Generate World → preview → Accept) before character creation. Refreshed 2026-09-21 — frontend image build chain fixed (pnpm pin, Node 22 base, workspace COPY, .dockerignore, preview CMD); both images rebuilt, endpoints 200. Refreshed 2026-09-21 (later) — start flow is now home → worldgen (**Forge your world**) → character → play; world generation moved off the home screen to a dedicated step entered via the **Create new tale** card.
 
 ## Architecture
 
@@ -78,15 +78,22 @@ npm run dev -- --host 0.0.0.0 --port 5173
 
 ### Start flow (UI)
 
-1. **World generation** — describe a world in the textarea and click **Generate
-   World**, or click **Surprise me** for a random world. The AI returns a theme +
-   premise in a preview card. No session exists yet.
-2. **Refine or accept** — **Generate Again** rerolls the world; **Accept** creates
+Phases: **home → worldgen → character → play**. World generation is a dedicated
+step, not part of the home screen.
+
+1. **Home** — the home screen shows the settings panel (API key / token), the
+   saved tales list, and a **Create new tale** card. No session exists yet.
+2. **World generation** — click **Create new tale** to open the dedicated
+   world-generation step, titled **Forge your world**. Describe a world in the
+   textarea and click **Generate World**, or click **Surprise me** for a random
+   world. The AI returns a theme + premise in a preview card. Leaving this step
+   discards the generated world.
+3. **Refine or accept** — **Generate Again** rerolls the world; **Accept** creates
    the session and advances to character creation.
-3. **Character creation** — describe the character; the AI generates a D&D 5e
+4. **Character creation** — describe the character; the AI generates a D&D 5e
    sheet. Going back to world generation abandons the pending session and resets
    character progress.
-4. **Play** — type actions; the GM narrates and the engine resolves `[CHECK:...]`
+5. **Play** — type actions; the GM narrates and the engine resolves `[CHECK:...]`
    rolls.
 
 ## Docker / Podman

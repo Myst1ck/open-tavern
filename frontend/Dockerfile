@@ -15,6 +15,10 @@ COPY . .
 # Build production bundle
 RUN pnpm build
 
+# Drop root: run the server as the image's unprivileged `node` user.
+RUN chown -R node:node /app
+USER node
+
 EXPOSE 5173
 
 # Serve built assets

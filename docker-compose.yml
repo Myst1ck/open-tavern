@@ -3,7 +3,7 @@ services:
     build: ./backend
     restart: unless-stopped
     ports:
-      - "100.88.11.28:8000:8000"
+      - "${OPEN_TAVERN_BIND_IP:-100.88.11.28}:8000:8000"
     environment:
       # Optional: pass through when set. Backend starts without it; OpenAI
       # features return 503 until a key is supplied.
@@ -16,7 +16,9 @@ services:
       # when bound to a non-localhost interface (see main.validate_startup_config).
       - OPEN_TAVERN_TOKEN=${OPEN_TAVERN_TOKEN}
       # Container listens on all interfaces so the frontend container can reach
-      # it over the docker network; the host port is bound to 127.0.0.1 above.
+      # it over the docker network. The host port above binds to
+      # ${OPEN_TAVERN_BIND_IP} (default 100.88.11.28, a LAN IP) — NOT localhost.
+      # Set OPEN_TAVERN_BIND_IP=127.0.0.1 to restrict access to this host only.
       - OPEN_TAVERN_BIND_HOST=0.0.0.0
     volumes:
       - backend-data:/data:Z

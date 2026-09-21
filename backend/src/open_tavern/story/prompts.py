@@ -471,8 +471,8 @@ def roll_result_prompt(check_desc: str, roll_summary: str) -> str:
     return (
         "The dice have been rolled and the outcome is now resolved. "
         "Narrate the result in second person, continuing the scene.\n\n"
-        f"Check: {check_desc}\n"
-        f"Result: {roll_summary}\n\n"
+        f"Check: {_sanitize(check_desc)}\n"
+        f"Result: {_sanitize(roll_summary)}\n\n"
         "Do not request another check for this same action and do not roll dice "
         "yourself. Narrate only. You may still apply state tags "
         "([DAMAGE:...], [HP:...], [ITEM:...], [CONDITION:...]) if the outcome warrants them."
