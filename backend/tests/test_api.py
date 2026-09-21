@@ -401,8 +401,8 @@ def test_x_base_url_header_ignored_by_endpoint(storage):
     client = _make_client(storage, fake)
 
     resp = client.post(
-        "/brainstorm",
-        json={"messages": [{"role": "user", "content": "hi"}]},
+        "/world/generate",
+        json={"description": "hi"},
         headers={"X-Base-URL": "http://169.254.169.254/v1"},
     )
 
@@ -879,75 +879,66 @@ def test_use_item_unknown_returns_success_false(storage):
     assert resp.json()["message"] == "item not found"
 
 
-# --- brainstorm ----------------------------------------------------------
+# --- world generation ----------------------------------------------------
 
 
-def test_brainstorm_returns_theme_and_premise(storage):
-    fake = FakeClient(['{"theme": "gothic", "premise": "a haunted tavern"}'])
+def test_world_generate_from_description(storage):
+    fake = FakeClient(['{"theme": "gothic horror", "premise": "a haunted tavern"}'])
     client = _make_client(storage, fake)
 
-    resp = client.post(
-        "/brainstorm",
-        json={"messages": [{"role": "user", "content": "spooky tavern"}]},
-    )
+    resp = client.post("/world/generate", json={"description": "spooky tavern"})
 
     assert resp.status_code == 200
     data = resp.json()
-    assert data["theme"] == "gothic"
+    assert data["theme"] == "gothic horror"
     assert data["premise"] == "a haunted tavern"
-    assert fake.calls[0]["messages"][0]["role"] == "system"
+    assert fake.calls[0]["json_mode"] is True
 
 
-def test_brainstorm_strips_whitespace(storage):
-    fake = FakeClient(['{"theme": "  gothic  ", "premise": "  haunted  "}'])
+def test_world_generate_surprise(storage):
+    fake = FakeClient(['{"theme": "space opera", "premise": "a dying star"}'])
     client = _make_client(storage, fake)
 
-    resp = client.post(
-        "/brainstorm",
-        json={"messages": [{"role": "user", "content": "hi"}]},
-    )
+    resp = client.post("/world/generate", json={"surprise": True})
 
     assert resp.status_code == 200
-    assert resp.json()["theme"] == "gothic"
-    assert resp.json()["premise"] == "haunted"
+    assert resp.json()["theme"] == "space opera"
 
 
-def test_brainstorm_invalid_llm_json_502(storage):
+def test_world_generate_empty_description_without_surprise_422(storage):
+    client = _make_client(storage, FakeClient([]))
+
+    resp = client.post("/world/generate", json={"description": ""})
+
+    assert resp.status_code == 422
+
+
+def test_world_generate_invalid_llm_json_502(storage):
     client = _make_client(storage, FakeClient(["not json"]))
 
-    resp = client.post(
-        "/brainstorm",
-        json={"messages": [{"role": "user", "content": "hi"}]},
-    )
+    resp = client.post("/world/generate", json={"description": "spooky"})
 
     assert resp.status_code == 502
 
 
-def test_brainstorm_missing_fields_502(storage):
-    client = _make_client(storage, FakeClient(['{"theme": "gothic"}']))
+def test_world_generate_missing_fields_502(storage):
+    client = _make_client(storage, FakeClient(['{"theme": "gothic horror"}']))
 
-    resp = client.post(
-        "/brainstorm",
-        json={"messages": [{"role": "user", "content": "hi"}]},
-    )
+    resp = client.post("/world/generate", json={"description": "spooky"})
 
     assert resp.status_code == 502
 
 
-def test_brainstorm_rate_limited(storage, monkeypatch):
-    monkeypatch.setattr(routes_module, "_brainstorm_limiter", RateLimiter(3, 60.0))
-    fake = FakeClient(['{"theme": "gothic", "premise": "haunted"}'] * 3)
-    client = _make_client(storage, fake)
+def test_world_generate_rate_limited(storage, monkeypatch):
+    monkeypatch.setattr(routes_module, "_world_limiter", RateLimiter(3, 60.0))
+    responses = [
+        '{"theme": "gothic horror", "premise": "a haunted tavern"}' for _ in range(3)
+    ]
+    client = _make_client(storage, FakeClient(responses))
 
     for _ in range(3):
-        resp = client.post(
-            "/brainstorm",
-            json={"messages": [{"role": "user", "content": "hi"}]},
-        )
+        resp = client.post("/world/generate", json={"description": "spooky"})
         assert resp.status_code == 200
 
-    resp = client.post(
-        "/brainstorm",
-        json={"messages": [{"role": "user", "content": "hi"}]},
-    )
+    resp = client.post("/world/generate", json={"description": "spooky"})
     assert resp.status_code == 429

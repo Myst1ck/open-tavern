@@ -12,9 +12,10 @@ def _reset_rate_limiters():
         routes._action_limiter,
         routes._character_limiter,
         routes._create_limiter,
-        routes._brainstorm_limiter,
+        routes._world_limiter,
         routes._delete_limiter,
         routes._item_limiter,
+        routes._read_limiter,
     ):
         limiter.reset()
     yield

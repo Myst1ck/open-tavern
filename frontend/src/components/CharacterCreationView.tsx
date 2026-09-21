@@ -113,11 +113,14 @@ function toMessage(err: unknown): string {
 interface CharacterCreationViewProps {
   sessionId: string;
   onCharacterCreated: (character: CharacterSheet) => void;
+  /** Return to world generation; accepting a world starts a fresh session. */
+  onBack: () => void;
 }
 
 export default function CharacterCreationView({
   sessionId,
   onCharacterCreated,
+  onBack,
 }: CharacterCreationViewProps) {
   const [values, setValues] = useState<Record<StepKey, string>>({
     name: "",
@@ -373,6 +376,14 @@ export default function CharacterCreationView({
 
   return (
     <section className="panel character-panel">
+      <button
+        type="button"
+        className="back-button"
+        onClick={onBack}
+        disabled={busy}
+      >
+        ← New World (resets progress)
+      </button>
       <h2>Forge Your Hero</h2>
       {!freeMode ? (
         <>
