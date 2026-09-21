@@ -88,20 +88,28 @@ docker compose up --build
 
 ## Manual play flow
 
-1. Describe your world in the textarea and click **Generate World** (or
-   **Surprise me** for a random world). The AI returns a theme + premise shown
-   in a preview card.
-2. **Generate Again** to reroll the world, or **Accept** to start. Accepting
+The flow is: **home → world generation ("Forge your world") → character → play**.
+
+1. The **home screen** shows the settings panel (API key / token), the saved
+   tales list, and a **Create new tale** card. No world generation happens here
+   and no session exists yet.
+2. Click **Create new tale** to open the dedicated world-generation step,
+   titled **Forge your world**. Describe your world in the textarea and click
+   **Generate World** (or **Surprise me** for a random world). The AI returns a
+   theme + premise shown in a preview card.
+3. **Generate Again** to reroll the world, or **Accept** to start. Accepting
    creates the session and moves to character creation.
-3. Describe your character in free text (race, concept, backstory). The AI
+4. Describe your character in free text (race, concept, backstory). The AI
    generates a full D&D 5e sheet as JSON; the engine validates it and computes
    every derived value (modifiers, proficiency bonus, HP) itself.
-4. Type actions. The GM narrates. When an outcome is uncertain the GM emits a
+5. Type actions. The GM narrates. When an outcome is uncertain the GM emits a
    `[CHECK:...]` tag — the engine rolls automatically and the GM narrates the
    result. Repeat.
 
 Going back from character creation to world generation abandons the pending
 session and resets character progress — accepting a world always starts fresh.
+Leaving the **Forge your world** step discards the generated world; nothing is
+persisted until you accept.
 
 ## Tag protocol
 

@@ -3,7 +3,8 @@ import { type FormEvent, useState } from "react";
 import { generateWorld } from "../api";
 
 export interface WorldGenViewProps {
-  onAccept: (theme: string, premise: string) => void;
+  onAccept: (theme: string, premise: string) => Promise<void> | void;
+  onBack: () => void;
 }
 
 interface WorldPreview {
@@ -20,7 +21,10 @@ function toMessage(err: unknown): string {
  * surprised); the backend returns a theme + premise, which the player may
  * regenerate or accept. No session exists until "Accept" is clicked.
  */
-export default function WorldGenView({ onAccept }: WorldGenViewProps) {
+export default function WorldGenView({
+  onAccept,
+  onBack,
+}: WorldGenViewProps) {
   const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,15 +58,34 @@ export default function WorldGenView({ onAccept }: WorldGenViewProps) {
     void handleGenerate(false);
   };
 
-  const handleAccept = () => {
-    if (preview !== null) {
-      onAccept(preview.theme, preview.premise);
+  const handleAccept = async () => {
+    if (busy || preview === null) {
+      return;
+    }
+    // Keep both Accept and Back disabled while the session is created, so a
+    // Back click mid-await cannot orphan the in-flight session.
+    setBusy(true);
+    setError(null);
+    try {
+      await onAccept(preview.theme, preview.premise);
+    } catch (err) {
+      setError(toMessage(err));
+    } finally {
+      setBusy(false);
     }
   };
 
   return (
     <section className="panel worldgen-panel">
-      <h2>Forge Your World</h2>
+      <button
+        type="button"
+        className="back-button"
+        onClick={onBack}
+        disabled={busy}
+      >
+        ← Back
+      </button>
+      <h2>Forge your world</h2>
       <p className="muted">Describe the world you want to play in.</p>
       <form onSubmit={handleSubmit}>
         <label htmlFor="world-description">World description</label>
@@ -94,7 +117,7 @@ export default function WorldGenView({ onAccept }: WorldGenViewProps) {
           <h3>{preview.theme}</h3>
           <p className="muted">{preview.premise}</p>
           <div className="refine-actions">
-            <button type="button" onClick={handleAccept} disabled={busy}>
+            <button type="button" onClick={() => void handleAccept()} disabled={busy}>
               Accept
             </button>
             <button

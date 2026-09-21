@@ -8,9 +8,12 @@ LLM chat client and the database — are injectable via :func:`get_client` and
 
 from __future__ import annotations
 
+import asyncio
 import os
 import threading
 from collections import OrderedDict
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import replace
 from functools import lru_cache
@@ -174,11 +177,43 @@ _character_limiter = RateLimiter(max_requests=5, window_seconds=60.0)
 _create_limiter = RateLimiter(max_requests=30, window_seconds=60.0)
 #: Limits for the stateless world-generation endpoint (paid LLM call).
 _world_limiter = RateLimiter(max_requests=30, window_seconds=60.0)
+#: Limits for session mutations (delete/rename) — cheap but unbounded writes.
 _delete_limiter = RateLimiter(max_requests=10, window_seconds=60.0)
 #: Limits for item CRUD operations.
 _item_limiter = RateLimiter(max_requests=30, window_seconds=60.0)
 #: Shared limit for cheap read endpoints (list/get) — scraping guard.
 _read_limiter = RateLimiter(max_requests=120, window_seconds=60.0)
+
+#: Dedicated bounded executor for blocking LLM + storage work.
+#:
+#: LLM calls can block for up to the client timeout (120 s). Running them on
+#: FastAPI's shared threadpool would let ~40 concurrent generations exhaust
+#: every worker and stall even cheap GETs (healthcheck). The async LLM
+#: handlers dispatch that work here instead; the semaphore below rejects
+#: with 503 as soon as all workers are busy, so the queue never grows
+#: unbounded. Slot count matches worker count exactly.
+_LLM_EXECUTOR_MAX_WORKERS: int = 16
+_LLM_EXECUTOR = ThreadPoolExecutor(
+    max_workers=_LLM_EXECUTOR_MAX_WORKERS,
+    thread_name_prefix="open-tavern-llm",
+)
+_LLM_EXECUTOR_SLOTS = threading.BoundedSemaphore(_LLM_EXECUTOR_MAX_WORKERS)
+
+
+async def _run_llm_task[T](fn: Callable[[], T]) -> T:
+    """Run blocking LLM/storage work on the dedicated bounded executor.
+
+    Raises 503 immediately when every worker is busy instead of queueing the
+    request behind an unbounded wait. The submitted function always runs to
+    completion (even if the awaiting coroutine is cancelled); the slot is
+    released in ``finally`` either way.
+    """
+    if not _LLM_EXECUTOR_SLOTS.acquire(blocking=False):
+        raise HTTPException(status_code=503, detail="server busy, try again shortly")
+    try:
+        return await asyncio.get_running_loop().run_in_executor(_LLM_EXECUTOR, fn)
+    finally:
+        _LLM_EXECUTOR_SLOTS.release()
 
 #: Per-session locks serialize read-modify-write of a single session's state so
 #: concurrent actions cannot lose updates. Keyed by session id.
@@ -335,7 +370,7 @@ def create_session(
     "/sessions/{session_id}/character",
     response_model=CharacterResponse,
 )
-def create_character(
+async def create_character(
     session_id: str,
     body: CharacterRequest,
     request: Request,
@@ -348,48 +383,58 @@ def create_character(
     class. The generated opening scene is saved into game state and the
     opening narration (when non-empty) opens the session transcript as the
     first assistant message.
+
+    The whole lock-held section (premise read, LLM generation, persistence)
+    runs on the bounded executor, so the per-session lock is only ever
+    waited on from an executor worker — never the shared threadpool.
     """
-    _ensure_session(storage, session_id)
+    await asyncio.to_thread(_ensure_session, storage, session_id)
     _enforce_rate_limit(request, _character_limiter, "character")
-    with _session_lock_ctx(session_id):
-        session_meta = storage.load_session(session_id)
-        premise = session_meta.get("premise") if session_meta else None
-        try:
-            sheet, opening, scene = generate_character(
-                body.description or "",
-                client,
-                name=body.name or "",
-                race=body.race or "",
-                class_concept=body.class_concept or "",
-                backstory=body.backstory or "",
-                personality=body.personality or "",
-                appearance=body.appearance or "",
-                motivation=body.motivation or "",
-                class_name=body.class_name or "",
-                class_hit_die=body.class_hit_die,
-                class_description=body.class_description or "",
-                premise=premise,
-            )
-        except CharacterGenerationError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        except LLMClientError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        storage.save_character(session_id, sheet)
-        state = new_state(sheet)
-        if scene:
-            state = replace(state, scene=scene)
-        storage.save_state(session_id, state)
-        _cache_state(session_id, state)
-        if opening:
-            storage.append_message(session_id, "assistant", opening)
-    return CharacterResponse(character=character_to_dict(sheet), opening=opening)
+
+    def _generate() -> CharacterResponse:
+        with _session_lock_ctx(session_id):
+            # Targeted single-column probe: the premise is the only session
+            # field needed here, so skip the full character + transcript load
+            # that ``load_session`` performs.
+            premise = storage.session_premise(session_id)
+            try:
+                sheet, opening, scene = generate_character(
+                    body.description or "",
+                    client,
+                    name=body.name or "",
+                    race=body.race or "",
+                    class_concept=body.class_concept or "",
+                    backstory=body.backstory or "",
+                    personality=body.personality or "",
+                    appearance=body.appearance or "",
+                    motivation=body.motivation or "",
+                    class_name=body.class_name or "",
+                    class_hit_die=body.class_hit_die,
+                    class_description=body.class_description or "",
+                    premise=premise,
+                )
+            except CharacterGenerationError as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+            except LLMClientError as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+            storage.save_character(session_id, sheet)
+            state = new_state(sheet)
+            if scene:
+                state = replace(state, scene=scene)
+            storage.save_state(session_id, state)
+            _cache_state(session_id, state)
+            if opening:
+                storage.append_message(session_id, "assistant", opening)
+        return CharacterResponse(character=character_to_dict(sheet), opening=opening)
+
+    return await _run_llm_task(_generate)
 
 
 @router.post(
     "/sessions/{session_id}/character/class",
     response_model=ClassResponse,
 )
-def create_class_preview(
+async def create_class_preview(
     session_id: str,
     body: ClassRequest,
     request: Request,
@@ -397,12 +442,16 @@ def create_class_preview(
     client: ChatClient = Depends(get_per_request_client),
 ) -> ClassResponse:
     """Generate a class definition preview from a concept; nothing is persisted."""
-    _ensure_session(storage, session_id)
+    await asyncio.to_thread(_ensure_session, storage, session_id)
     _enforce_rate_limit(request, _character_limiter, "class")
-    try:
-        definition = generate_class(body.class_concept, client)
-    except LLMClientError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    def _preview():
+        try:
+            return generate_class(body.class_concept, client)
+        except LLMClientError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    definition = await _run_llm_task(_preview)
     return ClassResponse(
         class_definition={
             "name": definition.name,
@@ -416,7 +465,7 @@ def create_class_preview(
     "/world/generate",
     response_model=WorldGenerateResponse,
 )
-def generate_world(
+async def generate_world(
     body: WorldGenerateRequest,
     request: Request,
     client: ChatClient = Depends(get_per_request_client),
@@ -434,12 +483,16 @@ def generate_world(
         )
     _enforce_rate_limit(request, _world_limiter, "world")
     prompt = world_gen_prompt(description, surprise=body.surprise)
-    try:
-        data = _parse_json(
-            client.chat([{"role": "user", "content": prompt}], json_mode=True)
-        )
-    except (LLMClientError, CharacterGenerationError) as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    def _call():
+        try:
+            return _parse_json(
+                client.chat([{"role": "user", "content": prompt}], json_mode=True)
+            )
+        except (LLMClientError, CharacterGenerationError) as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    data = await _run_llm_task(_call)
     if not isinstance(data, dict):
         raise HTTPException(status_code=502, detail="LLM response was not valid JSON")
     theme = data.get("theme")
@@ -455,7 +508,7 @@ def generate_world(
     "/sessions/{session_id}/character/refine",
     response_model=RefineResponse,
 )
-def refine_character(
+async def refine_character(
     session_id: str,
     body: RefineRequest,
     request: Request,
@@ -469,9 +522,9 @@ def refine_character(
     (``refine_prose`` returns ``None``) the original stored prose is returned
     verbatim — a silent fallback, never an error.
     """
-    _ensure_session(storage, session_id)
+    await asyncio.to_thread(_ensure_session, storage, session_id)
     _enforce_rate_limit(request, _character_limiter, "refine")
-    character = _require_character(storage, session_id)
+    character = await asyncio.to_thread(_require_character, storage, session_id)
     context = replace(
         character,
         backstory=(
@@ -487,7 +540,11 @@ def refine_character(
             body.motivation if body.motivation is not None else character.motivation
         ),
     )
-    refined = refine_prose(context, client)
+
+    def _refine():
+        return refine_prose(context, client)
+
+    refined = await _run_llm_task(_refine)
     if refined is None:
         return RefineResponse(
             backstory=character.backstory,
@@ -502,36 +559,46 @@ def refine_character(
     "/sessions/{session_id}/actions",
     response_model=ActionResponse,
 )
-def send_action(
+async def send_action(
     session_id: str,
     body: ActionRequest,
     request: Request,
     storage: Storage = Depends(get_storage),
     client: ChatClient = Depends(get_per_request_client),
 ) -> ActionResponse:
-    """Process a player action and return narration plus updated state."""
-    _ensure_session(storage, session_id)
+    """Process a player action and return narration plus updated state.
+
+    The whole lock-held section (state load, LLM turn, atomic persistence)
+    runs on the bounded executor, so the per-session lock is only ever
+    waited on from an executor worker — never the shared threadpool.
+    """
+    await asyncio.to_thread(_ensure_session, storage, session_id)
     _enforce_rate_limit(request, _action_limiter, "action")
 
-    with _session_lock_ctx(session_id):
-        # Re-check under the lock: a delete queued ahead of this action would
-        # otherwise surface as 409 (missing character) instead of 404.
-        _ensure_session(storage, session_id)
-        character = _require_character(storage, session_id)
-        state = _current_state(storage, session_id, character)
-        history = storage.load_messages(session_id)
-        premise = storage.session_premise(session_id)
+    def _run_turn():
+        with _session_lock_ctx(session_id):
+            # Re-check under the lock: a delete queued ahead of this action
+            # would otherwise surface as 409 (missing character) instead of
+            # 404.
+            _ensure_session(storage, session_id)
+            character = _require_character(storage, session_id)
+            state = _current_state(storage, session_id, character)
+            history = storage.load_messages(session_id)
+            premise = storage.session_premise(session_id)
 
-        try:
-            result = turn(body.action, state, history, client, premise=premise)
-        except LLMClientError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
+            try:
+                result = turn(body.action, state, history, client, premise=premise)
+            except LLMClientError as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-        storage.save_state(session_id, result.state)
-        _cache_state(session_id, result.state)
-        storage.append_message(session_id, "user", body.action)
-        storage.append_message(session_id, "assistant", result.narration)
+            # State + both transcript messages commit as a single storage
+            # transaction so a crash cannot leave state and transcript
+            # diverging (e.g. state advanced but the player message lost).
+            storage.save_turn(session_id, result.state, body.action, result.narration)
+            _cache_state(session_id, result.state)
+        return result
 
+    result = await _run_llm_task(_run_turn)
     return ActionResponse(
         narration=result.narration,
         state=state_to_dict(result.state),
@@ -603,9 +670,11 @@ def get_messages(
 def rename_session(
     session_id: str,
     body: RenameSessionRequest,
+    request: Request,
     storage: Storage = Depends(get_storage),
 ) -> SessionSummary:
     """Rename ``session_id`` and return its updated summary."""
+    _enforce_rate_limit(request, _delete_limiter, "rename")
     if not storage.rename_session(session_id, body.title):
         raise HTTPException(status_code=404, detail="session not found")
     return _session_summary(storage, session_id)
@@ -679,9 +748,11 @@ def create_item(
 def list_items(
     session_id: str,
     character_id: str,
+    request: Request,
     storage: Storage = Depends(get_storage),
 ) -> ItemListResponse:
     """Return all items for a character."""
+    _enforce_rate_limit(request, _read_limiter, "read")
     _ensure_session(storage, session_id)
     _require_character_id(storage, session_id, character_id)
 
@@ -697,9 +768,11 @@ def get_item(
     session_id: str,
     character_id: str,
     item_id: str,
+    request: Request,
     storage: Storage = Depends(get_storage),
 ) -> ItemResponse:
     """Return a single item by id."""
+    _enforce_rate_limit(request, _read_limiter, "read")
     _ensure_session(storage, session_id)
     _require_character_id(storage, session_id, character_id)
 
