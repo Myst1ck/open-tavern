@@ -14,6 +14,8 @@ const API_BASE_URL = (
 
 const SETTINGS_KEY = "open-tavern-settings";
 
+const TOKEN_KEY = "open-tavern-token";
+
 /** Abort in-flight fetches after this long to avoid hanging requests. */
 const REQUEST_TIMEOUT_MS = 30_000;
 
@@ -66,8 +68,42 @@ export function saveSettings(settings: TavernSettings): void {
  */
 let cachedSettings: TavernSettings = loadSettings();
 
+/**
+ * Read the backend bearer token from localStorage, tolerating failures.
+ *
+ * SECURITY NOTE: like the API key, the token is persisted in plaintext in
+ * localStorage and is readable by any script on this origin.
+ */
+export function getToken(): string {
+  try {
+    return localStorage.getItem(TOKEN_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+/** Persist the backend bearer token to localStorage. Empty string clears it. */
+export function setToken(token: string): void {
+  try {
+    if (token === "") {
+      localStorage.removeItem(TOKEN_KEY);
+    } else {
+      localStorage.setItem(TOKEN_KEY, token);
+    }
+  } catch {
+    // Storage unavailable (e.g. private mode); keep the in-memory value only.
+  }
+  cachedToken = token;
+}
+
+/** Cached bearer token, refreshed on setToken. */
+let cachedToken: string = getToken();
+
 function settingsHeaders(settings: TavernSettings): Record<string, string> {
   const headers: Record<string, string> = {};
+  if (cachedToken !== "") {
+    headers["Authorization"] = `Bearer ${cachedToken}`;
+  }
   if (settings.apiKey !== "") {
     headers["X-API-Key"] = settings.apiKey;
   }

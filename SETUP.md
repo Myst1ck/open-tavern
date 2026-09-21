@@ -170,7 +170,7 @@ podman cp $(podman-compose ps -q backend):/data/open_tavern.db ./open_tavern.db
 
 - `docker compose up --build` (or `podman-compose up --build`) builds and starts both containers.
 - Backend container binds `0.0.0.0` internally (compose sets `OPEN_TAVERN_BIND_HOST=0.0.0.0` so the frontend container reaches it over the docker network); host port binds the machine's Tailscale IP (`100.88.11.28:8000:8000` in `docker-compose.yml`) — reachable over Tailscale, not exposed on LAN. **Tailscale IP is machine-specific** — substitute your own (`tailscale ip -4`) in `docker-compose.yml`.
-- `OPEN_TAVERN_TOKEN` REQUIRED under compose (non-localhost bind). Backend refuses start without it. Set in root `.env`; frontend user pastes token into Settings panel (sent as `X-API-Key` header, stored in `localStorage`).
+- `OPEN_TAVERN_TOKEN` REQUIRED under compose (non-localhost bind). Backend refuses start without it. Set in root `.env`. Auth is `Authorization: Bearer <OPEN_TAVERN_TOKEN>` only (`BearerTokenMiddleware` in `backend/src/open_tavern/api/main.py`). Frontend sends the Bearer header from the token stored via the Settings panel (`settings-token` input, persisted in localStorage by `setToken()` in `frontend/src/api.ts`). The Settings panel `X-API-Key` field remains an OpenAI-key override for LLM calls, not auth. Under compose (token set), paste `OPEN_TAVERN_TOKEN` into the frontend Settings panel once; UI write flows then authenticate normally.
 - Runs as non-root user `appuser` (uid 10001); SQLite volume `backend-data` mounted at `/data` with `:Z` (SELinux).
 - `restart: unless-stopped` on both services.
 - Frontend `depends_on: backend: condition: service_healthy` — waits for backend health before starting.
@@ -268,3 +268,4 @@ Remote over internet (not LAN) also needs router port-forwarding to this machine
    dev sessions cleaned since last refresh).
 3. `frontend/.env` currently empty (no keys) — fine, frontend derives backend URL from
    browser host. `.env.example` now documents the optional `VITE_API_BASE_URL` override.
+4. **Frontend auth (fixed 2026-09-21)** — frontend now sends `Authorization: Bearer` from the Settings panel token input (`settings-token`), stored in localStorage via `setToken()` in `frontend/src/api.ts`. Under compose, paste `OPEN_TAVERN_TOKEN` into the Settings panel once; UI write flows (create session, character, action) authenticate normally. Backend verified healthy 2026-09-21 (POST /sessions → 201 via curl with Bearer token).
