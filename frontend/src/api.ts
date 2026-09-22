@@ -6,11 +6,20 @@
  * every call is a direct fetch against the backend.
  */
 
-const DEFAULT_BASE_URL = "";
+// API calls are same-origin. When the app is served under a subpath (e.g.
+// /tavern/ via tailscale serve), Vite's BASE_URL carries that prefix, so
+// absolute paths like /world/generate become /tavern/world/generate.
+// VITE_API_BASE_URL overrides this for split-origin deployments.
+const DEFAULT_BASE_URL = import.meta.env.BASE_URL;
 
-const API_BASE_URL = (
-  import.meta.env.VITE_API_BASE_URL ?? DEFAULT_BASE_URL
-).replace(/\/+$/, "");
+const API_BASE_URL = (() => {
+  const raw = (import.meta.env.VITE_API_BASE_URL ?? DEFAULT_BASE_URL).replace(
+    /\/+$/,
+    "",
+  );
+  // Root serving yields "" or "/" — both mean no prefix.
+  return raw === "/" ? "" : raw;
+})();
 
 const SETTINGS_KEY = "open-tavern-settings";
 
@@ -73,6 +82,9 @@ function settingsHeaders(settings: TavernSettings): Record<string, string> {
   }
   if (settings.model !== "") {
     headers["X-Model"] = settings.model;
+  }
+  if (settings.baseUrl !== "") {
+    headers["X-Base-Url"] = settings.baseUrl;
   }
   return headers;
 }

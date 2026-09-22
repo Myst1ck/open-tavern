@@ -84,20 +84,23 @@ def get_client() -> OpenAIClient:
 def build_client_from_headers(
     api_key: str | None,
     model: str | None,
+    base_url: str | None = None,
 ) -> OpenAIClient:
     """Build an LLM client from non-empty header values.
 
     Each non-empty value overrides the corresponding environment fallback inside
     :class:`OpenAIClient`; empty/absent values are dropped so the constructor's
-    env-based defaults apply. The base URL is never taken from headers — it
-    comes only from ``OPENAI_BASE_URL`` (or the constructor default). Always
-    returns a fresh, network-free client.
+    env-based defaults apply. The base URL CAN come from headers (``X-Base-Url``);
+    when absent/empty it falls back to ``OPENAI_BASE_URL`` (or the constructor
+    default). Always returns a fresh, network-free client.
     """
     kwargs: dict[str, str] = {}
     if api_key:
         kwargs["api_key"] = api_key
     if model:
         kwargs["model"] = model
+    if base_url:
+        kwargs["base_url"] = base_url
     try:
         return OpenAIClient(**kwargs)
     except ValueError as exc:
@@ -107,24 +110,24 @@ def build_client_from_headers(
 def get_per_request_client(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
     x_model: str | None = Header(default=None, alias="X-Model"),
+    x_base_url: str | None = Header(default=None, alias="X-Base-Url"),
     env_client: ChatClient = Depends(get_client),
 ) -> ChatClient:
     """Resolve the LLM client from per-request headers, else the env client.
 
-    Non-empty ``X-API-Key``/``X-Model`` headers override the environment-
-    configured :class:`OpenAIClient`; the base URL is fixed from
-    ``OPENAI_BASE_URL`` and never read from headers. Without any recognized
-    header the shared environment client (or its dependency-override test
-    fake) is used unchanged.
+    Non-empty ``X-API-Key``/``X-Model``/``X-Base-Url`` headers override the
+    environment-configured :class:`OpenAIClient`; an absent/empty base URL falls
+    back to ``OPENAI_BASE_URL``. Without any recognized header the shared
+    environment client (or its dependency-override test fake) is used unchanged.
 
     Raises ``HTTPException`` 503 when the resolved client is a real
     :class:`OpenAIClient` with no API key — the app starts without a key, so
     only OpenAI-dependent requests fail until one is configured.
     """
-    if not (x_api_key or x_model):
+    if not (x_api_key or x_model or x_base_url):
         client: ChatClient = env_client
     else:
-        client = build_client_from_headers(x_api_key, x_model)
+        client = build_client_from_headers(x_api_key, x_model, x_base_url)
     if isinstance(client, OpenAIClient) and not client.api_key.strip():
         raise HTTPException(
             status_code=503,
