@@ -1,6 +1,6 @@
 # Open Tavern — SETUP / Bring-Up Playbook
 
-Authoritative bring-up doc. Fresh machine → follow this. Generated 2026-08-28 by `/up`. Refreshed 2026-09-08 by `/up` — verified bring-up, all endpoints 200. Refreshed 2026-09-11 — auth/bind/proxy env vars, compose runtime, migration runner documented. Refreshed 2026-09-20 — SELinux `:Z` volume, uid 10001 ownership fix, token requirement under compose, frontend `Created`-state quirk. Refreshed 2026-09-20 (later) — backend host port now binds Tailscale IP (not loopback), CORS middleware order fix, podman-compose stale-image gotcha. Refreshed 2026-09-20 — start flow now world generation (textarea → Generate World → preview → Accept) before character creation. Refreshed 2026-09-21 — frontend image build chain fixed (pnpm pin, Node 22 base, workspace COPY, .dockerignore, preview CMD); both images rebuilt, endpoints 200. Refreshed 2026-09-21 (later) — start flow is now home → worldgen (**Forge your world**) → character → play; world generation moved off the home screen to a dedicated step entered via the **Create new tale** card. Refreshed 2026-09-21 (local mode) — local start documented with root `.env` sourcing (backend has no `.env` loader); uvicorn :8000 + vite :5173 verified 200. Refreshed 2026-09-21 (proxy architecture) — bearer-token auth removed from frontend; backend binds `127.0.0.1:8000` (localhost-only), Vite on `0.0.0.0:5173` proxies `/sessions` + `/world` to backend, tailnet devices reach frontend only.
+Authoritative bring-up doc. Fresh machine → follow this. Generated 2026-08-28 by `/up`. Refreshed 2026-09-08 by `/up` — verified bring-up, all endpoints 200. Refreshed 2026-09-11 — auth/bind/proxy env vars, compose runtime, migration runner documented. Refreshed 2026-09-20 — SELinux `:Z` volume, uid 10001 ownership fix, token requirement under compose, frontend `Created`-state quirk. Refreshed 2026-09-20 (later) — backend host port now binds Tailscale IP (not loopback), CORS middleware order fix, podman-compose stale-image gotcha. Refreshed 2026-09-20 — start flow now world generation (textarea → Generate World → preview → Accept) before character creation. Refreshed 2026-09-21 — frontend image build chain fixed (pnpm pin, Node 22 base, workspace COPY, .dockerignore, preview CMD); both images rebuilt, endpoints 200. Refreshed 2026-09-21 (later) — start flow is now home → worldgen (**Forge your world**) → character → play; world generation moved off the home screen to a dedicated step entered via the **Create new tale** card. Refreshed 2026-09-21 (local mode) — local start documented with root `.env` sourcing (backend has no `.env` loader); uvicorn :8000 + vite :5173 verified 200. Refreshed 2026-09-21 (proxy architecture) — bearer-token auth removed from frontend; backend binds `127.0.0.1:8000` (localhost-only), Vite on `0.0.0.0:5173` proxies `/sessions` + `/world` to backend, tailnet devices reach frontend only. Refreshed 2026-09-21 (PWA) — installable app: header install button (desktop), Share → Add to Home Screen (iOS), NetworkFirst cache for `GET /sessions` + `/world` (300s TTL), update toast, secure-context requirement (Tailscale HTTPS / localhost).
 
 ## Architecture
 
@@ -35,7 +35,6 @@ Note: no root `/` API route — `/` on :8000 returns 404 by design. Use `/sessio
 | `OPENAI_BASE_URL`  | `https://api.openai.com/v1`| no       | Provider base URL. Env-only — `X-Base-URL` header removed, not honored |
 | `OPENAI_MODEL`     | `gpt-4o-mini`              | no       | Model to call                      |
 | `OPEN_TAVERN_DB`   | `open_tavern.db`           | no       | SQLite file path (relative to cwd) |
-| `OPEN_TAVERN_TOKEN`| — (unset)                  | no       | **Deprecated / unused.** Bearer-token auth removed from the frontend; backend binds loopback and Vite proxies API calls. Leave unset. (Backend still refuses a non-localhost bind with no token — keep the bind on `127.0.0.1`.) |
 | `OPEN_TAVERN_BIND_HOST` | `127.0.0.1`          | no       | uvicorn bind host. Compose sets `0.0.0.0` (container network); host port binds the machine's Tailscale IP (see Production runtime) |
 | `OPEN_TAVERN_TRUST_PROXY` | — (unset)          | no       | `=1` trusts `X-Forwarded-For` for rate-limit client keys. Default off — header ignored |
 | `OPEN_TAVERN_ALLOWED_ORIGINS` | `http://localhost:3000` | no       | Comma-separated CORS origins. Not needed under the proxy architecture — the browser only talks to the frontend origin (same-origin), so no cross-origin requests occur |
@@ -46,7 +45,7 @@ Note: no root `/` API route — `/` on :8000 returns 404 by design. Use `/sessio
 |----------------------|----------------------------|----------|-------------------------|
 | `VITE_API_BASE_URL` | `""` (same-origin)         | no       | Backend base URL. Default empty → requests go to the page origin and Vite proxies `/sessions` + `/world` to `http://127.0.0.1:8000`. Override only for non-proxied setups. Key present in `.env.example` as commented-out line |
 
-Backend has no `.env` file — export vars or run with env. `OPENAI_API_KEY` optional — app boots without it; AI features (character generation, GM narration) fail with 503 until key set via env or app config. Note: `podman-compose` reads a root `.env` for variable interpolation (e.g. `OPEN_TAVERN_TOKEN`) — that is compose-level, not a backend loader.
+Backend has no `.env` file — export vars or run with env. `OPENAI_API_KEY` optional — app boots without it; AI features (character generation, GM narration) fail with 503 until key set via env or app config. Note: `podman-compose` reads a root `.env` for variable interpolation — that is compose-level, not a backend loader.
 
 ## Install
 
@@ -76,10 +75,10 @@ cd frontend
 npm run dev -- --host 0.0.0.0 --port 5173
 ```
 
-**No token needed.** Backend binds loopback (`127.0.0.1`) and starts without
-`OPEN_TAVERN_TOKEN`. The Vite dev server proxies `/sessions` and `/world` to the
-backend, so the browser only ever talks to the frontend origin. Do not bind the
-backend to `0.0.0.0` — that would expose the tokenless API to the network.
+**No auth needed.** Backend binds loopback (`127.0.0.1`). The Vite dev server
+proxies `/sessions` and `/world` to the backend, so the browser only ever talks
+to the frontend origin. Do not bind the backend to `0.0.0.0` — that would expose
+the API to the network.
 
 ### Start flow (UI)
 
@@ -181,12 +180,12 @@ podman cp $(podman-compose ps -q backend):/data/open_tavern.db ./open_tavern.db
 ### Production runtime
 
 - `docker compose up --build` (or `podman-compose up --build`) builds and starts both containers.
-- Backend container binds `0.0.0.0` internally (compose sets `OPEN_TAVERN_BIND_HOST=0.0.0.0` so the frontend container reaches it over the docker network); the host port must bind loopback (`127.0.0.1:8000:8000` in `docker-compose.yml`) so the tokenless API is never exposed off-host. The frontend container proxies `/sessions` + `/world` to the backend over the docker network. ⚠️ `docker-compose.yml` currently maps `OPEN_TAVERN_BIND_IP` (default Tailscale IP) — change it to `127.0.0.1` to match this topology.
-- **No token auth.** `OPEN_TAVERN_TOKEN` is unset; the frontend sends no `Authorization` header. The Settings panel `X-API-Key` field is an OpenAI-key override for LLM calls, not auth. Tailnet is the trust boundary — tailnet devices reach the frontend only.
+- Backend container binds `0.0.0.0` internally (compose sets `OPEN_TAVERN_BIND_HOST=0.0.0.0` so the frontend container reaches it over the docker network); the host port must bind loopback (`127.0.0.1:8000:8000` in `docker-compose.yml`) so the API is never exposed off-host. The frontend container proxies `/sessions` + `/world` to the backend over the docker network. ⚠️ `docker-compose.yml` currently maps `OPEN_TAVERN_BIND_IP` (default Tailscale IP) — change it to `127.0.0.1` to match this topology.
+- **No auth.** The frontend sends no `Authorization` header. The Settings panel `X-API-Key` field is an OpenAI-key override for LLM calls, not auth. Tailnet is the trust boundary — tailnet devices reach the frontend only.
 - Runs as non-root user `appuser` (uid 10001); SQLite volume `backend-data` mounted at `/data` with `:Z` (SELinux).
 - `restart: unless-stopped` on both services.
 - Frontend `depends_on: backend: condition: service_healthy` — waits for backend health before starting.
-- Backend `HEALTHCHECK` hits `GET /sessions` (auth-exempt) every 30s.
+- Backend `HEALTHCHECK` hits `GET /sessions` every 30s.
 
 ### Files referenced
 
@@ -214,6 +213,27 @@ Required for remote access:
 Symptom: `failed to fetch` in browser on character create or any API call.
 Cause: backend unreachable at `127.0.0.1:8000` (not running, wrong port) OR Vite proxy missing/misconfigured.
 Verify from remote device: `curl http://<host-ip>:5173/sessions` → expect `200` (proxied).
+
+## PWA (installable app)
+
+Frontend ships a service worker + web app manifest, so the app can be installed and run standalone.
+
+**Requirement — secure context.** Service workers need HTTPS (or `localhost`). Remote/tailnet access must use Tailscale HTTPS (`https://<machine>.<tailnet>.ts.net`); plain `http://<host-ip>:5173` is not a secure context and the PWA will not register.
+
+**Install**
+- **Desktop (Chrome/Edge):** an install button appears in the app header when the browser fires `beforeinstallprompt`. Click it → confirm the browser prompt.
+- **iOS Safari:** no install button. Tap **Share → Add to Home Screen**.
+
+**Offline behavior**
+- `GET /sessions` and `GET /world` are cached NetworkFirst with a 5-minute (300s) TTL — served from cache when offline, refreshed in the background when online.
+- Writes (`POST`/`PUT`/`DELETE`) are not cached and not retried — they require connectivity and fail fast. No Background Sync.
+
+**Update prompt**
+- Service worker uses `registerType: 'prompt'`. When a new build is deployed a toast appears; **Refresh** reloads the app via `updateServiceWorker(true)`.
+- The `offlineReady` toast ('App ready to work offline') appears on the first visit where the service worker becomes ready, not only on updates.
+
+**Dev mode**
+- PWA is enabled in dev too (`devOptions.enabled: true`), so the service worker and install prompt are testable against the Vite dev server.
 
 ## Health Check
 

@@ -1,0 +1,53 @@
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: open-tavern-security-headers
+  namespace: home
+  labels:
+    app.kubernetes.io/name: open-tavern
+spec:
+  headers:
+    contentTypeNosniff: true
+    frameDeny: true
+    referrerPolicy: strict-origin-when-cross-origin
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: open-tavern
+  namespace: home
+  labels:
+    app.kubernetes.io/name: open-tavern
+  annotations:
+    # CSP intentionally omitted: the PWA ships inline scripts/Workbox runtime
+    # and a strict policy would break install/offline behavior.
+    traefik.ingress.kubernetes.io/router.middlewares: home-open-tavern-security-headers@kubernetescrd
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: slave.tail7c13f3.ts.net
+      http:
+        paths:
+          # Frontend fetches root-absolute /sessions and /world; route them to
+          # the frontend service, whose vite preview proxies to the backend.
+          - path: /sessions
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 5173
+          - path: /world
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 5173
+          - path: /tavern
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 5173

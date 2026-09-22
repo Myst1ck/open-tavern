@@ -997,3 +997,64 @@ h3 {
   color: var(--text-muted);
   margin: 0.25rem 0 0;
 }
+
+.update-toast {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  max-width: min(90vw, 360px);
+  padding: 0.75rem 1rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  color: var(--text);
+}
+
+.update-toast-message {
+  flex: 1;
+  font-size: 0.9rem;
+}
+
+.update-toast-action {
+  background: var(--accent);
+  border: 1px solid var(--accent-strong);
+  color: var(--bg);
+  padding: 0.35rem 0.7rem;
+  font-size: 0.8rem;
+}
+
+.update-toast-action:hover {
+  background: var(--accent-strong);
+}
+
+.update-toast-close {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 0 0.25rem;
+  cursor: pointer;
+}
+
+.update-toast-close:hover {
+  color: var(--text);
+}
+
+.install-button {
+  margin-left: auto;
+  padding: 0.4rem 0.9rem;
+  font-size: 0.8rem;
+}
+
+.install-hint {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+}
