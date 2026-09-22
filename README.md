@@ -52,7 +52,6 @@ Set environment variables:
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Provider base URL. Env-only — `X-Base-URL` header not honored |
 | `OPENAI_MODEL`    | `gpt-4o-mini`             | Model to call                     |
 | `OPEN_TAVERN_DB`  | `open_tavern.db`          | SQLite file path (optional)       |
-| `OPEN_TAVERN_TOKEN` | *(unset)*               | Bearer token for API auth. Unset + non-localhost bind → startup refused |
 | `OPEN_TAVERN_BIND_HOST` | `127.0.0.1`        | uvicorn bind host                 |
 | `OPEN_TAVERN_TRUST_PROXY` | *(unset)*         | `=1` trusts `X-Forwarded-For` for rate-limit client keys |
 
@@ -110,6 +109,16 @@ Going back from character creation to world generation abandons the pending
 session and resets character progress — accepting a world always starts fresh.
 Leaving the **Forge your world** step discards the generated world; nothing is
 persisted until you accept.
+
+## Install as an app (PWA)
+
+The frontend is installable — a service worker caches read endpoints and the app runs standalone from the home screen.
+
+- **Desktop (Chrome/Edge):** click the install button in the app header (shown when the browser fires `beforeinstallprompt`).
+- **iOS Safari:** **Share → Add to Home Screen** (no install button).
+- **Offline:** `GET /sessions` and `GET /world` are cached NetworkFirst for 5 minutes, so recent data is readable offline. Writes need connectivity and fail fast — no background sync.
+- **Updates:** when a new version ships, a toast appears; **Refresh** reloads into the new build. An 'App ready to work offline' toast also appears on the first visit where the service worker becomes ready.
+- **Requirement:** service workers need a secure context — use Tailscale HTTPS (`https://<machine>.<tailnet>.ts.net`) or `localhost`.
 
 ## Tag protocol
 

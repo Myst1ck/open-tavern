@@ -3,7 +3,7 @@ services:
     build: ./backend
     restart: unless-stopped
     ports:
-      - "${OPEN_TAVERN_BIND_IP:-100.88.11.28}:8000:8000"
+      - "${OPEN_TAVERN_BIND_IP:-127.0.0.1}:8000:8000"
     environment:
       # Optional: pass through when set. Backend starts without it; OpenAI
       # features return 503 until a key is supplied.
@@ -12,22 +12,33 @@ services:
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
       - OPEN_TAVERN_DB=/data/open_tavern.db
       - OPEN_TAVERN_ALLOWED_ORIGINS=${OPEN_TAVERN_ALLOWED_ORIGINS:-http://localhost:5173}
-      # Bearer token required for API access; startup refuses to run without it
-      # when bound to a non-localhost interface (see main.validate_startup_config).
-      - OPEN_TAVERN_TOKEN=${OPEN_TAVERN_TOKEN}
       # Container listens on all interfaces so the frontend container can reach
       # it over the docker network. The host port above binds to
-      # ${OPEN_TAVERN_BIND_IP} (default 100.88.11.28, a LAN IP) — NOT localhost.
-      # Set OPEN_TAVERN_BIND_IP=127.0.0.1 to restrict access to this host only.
+      # ${OPEN_TAVERN_BIND_IP} (default 127.0.0.1, localhost-only). Set
+      # OPEN_TAVERN_BIND_IP to a LAN/tailnet IP to expose the API directly.
       - OPEN_TAVERN_BIND_HOST=0.0.0.0
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/sessions', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
     volumes:
       - backend-data:/data:Z
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        VITE_BASE: /
+        VITE_PWA_NAME: Open Tavern
     restart: unless-stopped
     ports:
-      - "5173:5173"
+      - "${OPEN_TAVERN_BIND_IP:-127.0.0.1}:5173:5173"
+    environment:
+      - OPEN_TAVERN_PROXY_TARGET=http://backend:8000
+      - VITE_BASE=/
+      - VITE_PWA_NAME=Open Tavern
     depends_on:
       backend:
         condition: service_healthy

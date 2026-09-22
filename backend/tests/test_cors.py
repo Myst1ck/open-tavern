@@ -27,7 +27,7 @@ def _get_with_origin(client: TestClient, origin: str):
 def test_allowed_origins_default_when_env_unset(monkeypatch):
     monkeypatch.delenv("OPEN_TAVERN_ALLOWED_ORIGINS", raising=False)
 
-    assert _allowed_origins() == ["http://localhost:3000"]
+    assert _allowed_origins() == ["http://localhost:5173"]
 
 
 def test_allowed_origins_parses_comma_separated_env(monkeypatch):
@@ -53,10 +53,10 @@ def test_allowed_origin_gets_cors_headers(monkeypatch):
     monkeypatch.delenv("OPEN_TAVERN_ALLOWED_ORIGINS", raising=False)
     client = _client()
 
-    resp = _get_with_origin(client, "http://localhost:3000")
+    resp = _get_with_origin(client, "http://localhost:5173")
 
     assert resp.status_code == 200
-    assert resp.headers.get("access-control-allow-origin") == "http://localhost:3000"
+    assert resp.headers.get("access-control-allow-origin") == "http://localhost:5173"
 
 
 def test_disallowed_origin_gets_no_cors_headers(monkeypatch):
@@ -81,7 +81,7 @@ def test_env_override_allows_only_configured_origins(monkeypatch):
     allowed_b = _get_with_origin(client, "http://b.example")
     assert allowed_b.headers.get("access-control-allow-origin") == "http://b.example"
 
-    denied = _get_with_origin(client, "http://localhost:3000")
+    denied = _get_with_origin(client, "http://localhost:5173")
     assert "access-control-allow-origin" not in denied.headers
 
 
@@ -92,10 +92,33 @@ def test_preflight_allowed_origin_ok(monkeypatch):
     resp = client.options(
         "/sessions",
         headers={
-            "Origin": "http://localhost:3000",
+            "Origin": "http://localhost:5173",
             "Access-Control-Request-Method": "GET",
         },
     )
 
     assert resp.status_code == 200
-    assert resp.headers.get("access-control-allow-origin") == "http://localhost:3000"
+    assert resp.headers.get("access-control-allow-origin") == "http://localhost:5173"
+
+
+def test_preflight_enumerates_methods_and_headers(monkeypatch):
+    monkeypatch.delenv("OPEN_TAVERN_ALLOWED_ORIGINS", raising=False)
+    client = _client()
+
+    resp = client.options(
+        "/sessions",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "PATCH",
+            "Access-Control-Request-Headers": "X-API-Key, X-Model",
+        },
+    )
+
+    assert resp.status_code == 200
+    allow_methods = resp.headers.get("access-control-allow-methods", "")
+    assert "PATCH" in allow_methods
+    assert "*" not in allow_methods
+    allow_headers = resp.headers.get("access-control-allow-headers", "").lower()
+    assert "x-api-key" in allow_headers
+    assert "x-model" in allow_headers
+    assert "*" not in allow_headers

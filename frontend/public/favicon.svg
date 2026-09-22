@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Open Tavern">
+  <rect width="64" height="64" rx="12" fill="#1a120b"/>
+  <rect x="17" y="15" width="25" height="35" rx="4" fill="#e8d5b7"/>
+  <path d="M42 24h3a9 9 0 0 1 0 18h-3" fill="none" stroke="#e8d5b7" stroke-width="5" stroke-linecap="round"/>
+</svg>

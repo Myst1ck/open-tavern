@@ -26,12 +26,14 @@ import CharacterSheetView from "./components/CharacterSheet";
 import Chat, { type Message } from "./components/Chat";
 import CreateTaleCard from "./components/CreateTaleCard";
 import FilterBar, { type FilterState } from "./components/FilterBar";
+import InstallButton from "./components/InstallButton";
 import InventoryGrid from "./components/InventoryGrid";
 import ItemModal from "./components/ItemModal";
 import ItemTooltip from "./components/ItemTooltip";
 import SavedTalesList from "./components/SavedTalesList";
 import SettingsPanel from "./components/SettingsPanel";
 import StateView from "./components/StateView";
+import UpdateToast from "./components/UpdateToast";
 import WorldGenView from "./components/WorldGenView";
 
 type Phase = "home" | "worldgen" | "character" | "play";
@@ -62,6 +64,31 @@ function isCharacterSheet(
   return value !== null && typeof value.name === "string" && value.name !== "";
 }
 
+interface InventoryPanelProps {
+  items: Item[];
+  onItemClick: (item: Item) => void;
+}
+
+/**
+ * Owns tooltip/hover state so hovering an inventory card re-renders only this
+ * subtree, not the whole play view (Chat, StateView, ...).
+ */
+function InventoryPanel({ items, onItemClick }: InventoryPanelProps) {
+  const [hoveredItem, setHoveredItem] = useState<Item | null>(null);
+  return (
+    <>
+      <InventoryGrid
+        items={items}
+        onItemClick={onItemClick}
+        onItemHover={setHoveredItem}
+      />
+      {hoveredItem !== null && (
+        <ItemTooltip item={hoveredItem} visible={true} />
+      )}
+    </>
+  );
+}
+
 export default function App() {
   const [phase, setPhase] = useState<Phase>("home");
   const [session, setSession] = useState<Session | null>(null);
@@ -78,8 +105,8 @@ export default function App() {
     sortBy: "name",
     sortDir: "asc",
   });
-  const [hoveredItem, setHoveredItem] = useState<Item | null>(null);
   const [selectedItem, setSelectedItem] = useState<Item | null>(null);
+  const [itemBusy, setItemBusy] = useState(false);
 
   const refreshSessions = async () => {
     setSessionsBusy(true);
@@ -127,17 +154,14 @@ export default function App() {
       });
   }, [character?.inventory, filter]);
 
-  const handleItemHover = useCallback((item: Item | null) => {
-    setHoveredItem(item);
-  }, []);
-
   const handleItemClick = useCallback((item: Item) => {
     setSelectedItem(item);
   }, []);
 
   const handleItemAction = useCallback(
     async (action: string, item: Item) => {
-      if (!session || !character || busy) return;
+      if (!session || !character || itemBusy) return;
+      setItemBusy(true);
       try {
         const charId = session.session_id;
         let res;
@@ -161,13 +185,16 @@ export default function App() {
           const fresh = await getState(session.session_id);
           setState(fresh.state);
           setCharacter(fresh.state.character);
+          // Close only on success; a failed action keeps the modal open.
+          setSelectedItem(null);
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Item action failed");
+      } finally {
+        setItemBusy(false);
       }
-      setSelectedItem(null);
     },
-    [session, character, busy],
+    [session, character, itemBusy],
   );
 
   const handleSaveSettings = (next: TavernSettings) => {
@@ -347,7 +374,9 @@ export default function App() {
             {session.world_theme} · {session.session_id.slice(0, 8)}
           </span>
         )}
+        <InstallButton />
       </header>
+      <UpdateToast />
       <main className="app-main">
         {phase === "home" && (
           <>
@@ -405,10 +434,9 @@ export default function App() {
                       currentFilter={filter}
                       onFilterChange={setFilter}
                     />
-                    <InventoryGrid
+                    <InventoryPanel
                       items={filteredItems}
                       onItemClick={handleItemClick}
-                      onItemHover={handleItemHover}
                     />
                   </section>
                 )}
@@ -423,9 +451,6 @@ export default function App() {
                 onUse={(item) => handleItemAction("use", item)}
                 onDrop={(item) => handleItemAction("drop", item)}
               />
-            )}
-            {hoveredItem !== null && (
-              <ItemTooltip item={hoveredItem} visible={true} />
             )}
           </>
         )}
