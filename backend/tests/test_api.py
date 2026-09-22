@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 import open_tavern.api.routes as routes_module
@@ -382,32 +383,64 @@ def test_build_client_from_headers_empty_values_overridden_by_env(monkeypatch):
     assert client.model == "env-model"
 
 
-def test_get_per_request_client_ignores_base_url_header(monkeypatch):
+def test_get_per_request_client_honors_base_url_header(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "env-key")
     monkeypatch.setenv("OPENAI_BASE_URL", "http://env:8000/v1")
     monkeypatch.setenv("OPENAI_MODEL", "env-model")
 
-    client = get_per_request_client(x_api_key="sk-test", x_model="llama3")
+    client = get_per_request_client(
+        x_api_key="sk-test",
+        x_model="llama3",
+        x_base_url="https://openrouter.ai/api/v1",
+    )
 
     assert isinstance(client, OpenAIClient)
     assert client.api_key == "sk-test"
     assert client.model == "llama3"
-    # X-Base-URL is not a recognized header: env base URL is used.
+    # X-Base-Url is a recognized header: it overrides the env base URL.
+    assert client.base_url == "https://openrouter.ai/api/v1"
+
+
+def test_get_per_request_client_empty_base_url_falls_back_to_env(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "env-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://env:8000/v1")
+    monkeypatch.setenv("OPENAI_MODEL", "env-model")
+
+    client = get_per_request_client(
+        x_api_key="sk-test",
+        x_model="llama3",
+        x_base_url="",
+    )
+
+    assert isinstance(client, OpenAIClient)
+    # Empty X-Base-Url is dropped: env base URL applies.
     assert client.base_url == "http://env:8000/v1"
 
 
-def test_x_base_url_header_ignored_by_endpoint(storage):
+def test_build_client_from_headers_invalid_base_url_raises_400(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+
+    with pytest.raises(HTTPException) as excinfo:
+        build_client_from_headers(
+            api_key="sk-test", model="", base_url="not-a-url"
+        )
+
+    assert excinfo.value.status_code == 400
+
+
+def test_x_base_url_header_blocked_by_endpoint(storage):
     fake = FakeClient(['{"theme": "gothic", "premise": "a haunted tavern"}'])
     client = _make_client(storage, fake)
 
     resp = client.post(
         "/world/generate",
         json={"description": "hi"},
-        headers={"X-Base-URL": "http://169.254.169.254/v1"},
+        headers={"X-Base-Url": "http://169.254.169.254/v1"},
     )
 
-    assert resp.status_code == 200
-    assert fake.calls  # env fake client used; header did not build a real client
+    assert resp.status_code == 400
+    assert not fake.calls  # blocked base URL rejected before any LLM call
 
 
 def test_unknown_session_returns_404(storage):

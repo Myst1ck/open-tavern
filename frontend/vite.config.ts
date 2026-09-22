@@ -15,6 +15,17 @@ const proxyTarget = process.env.OPEN_TAVERN_PROXY_TARGET ?? "http://127.0.0.1:80
 const backendProxy = {
   "/sessions": proxyTarget,
   "/world": proxyTarget,
+  // Subpath variants: tailscale serve forwards /tavern/* to vite, which must
+  // strip the prefix before proxying to the backend. Hardcoded /tavern matches
+  // the default VITE_BASE; root serving uses the entries above.
+  "/tavern/sessions": {
+    target: proxyTarget,
+    rewrite: (path: string) => path.replace(/^\/tavern/, ""),
+  },
+  "/tavern/world": {
+    target: proxyTarget,
+    rewrite: (path: string) => path.replace(/^\/tavern/, ""),
+  },
 };
 
 export default defineConfig({

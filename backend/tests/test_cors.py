@@ -110,7 +110,7 @@ def test_preflight_enumerates_methods_and_headers(monkeypatch):
         headers={
             "Origin": "http://localhost:5173",
             "Access-Control-Request-Method": "PATCH",
-            "Access-Control-Request-Headers": "X-API-Key, X-Model",
+            "Access-Control-Request-Headers": "X-API-Key, X-Model, X-Base-Url",
         },
     )
 
@@ -121,4 +121,5 @@ def test_preflight_enumerates_methods_and_headers(monkeypatch):
     allow_headers = resp.headers.get("access-control-allow-headers", "").lower()
     assert "x-api-key" in allow_headers
     assert "x-model" in allow_headers
+    assert "x-base-url" in allow_headers
     assert "*" not in allow_headers

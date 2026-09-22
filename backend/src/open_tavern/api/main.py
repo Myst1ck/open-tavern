@@ -46,9 +46,15 @@ def create_app() -> FastAPI:
         allow_origins=_allowed_origins(),
         allow_credentials=False,
         # Enumerated rather than "*": PATCH is used by session rename, and the
-        # frontend sends X-API-Key / X-Model alongside Content-Type.
+        # frontend sends X-API-Key / X-Model / X-Base-Url alongside Content-Type.
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Content-Type", "Authorization", "X-API-Key", "X-Model"],
+        allow_headers=[
+            "Content-Type",
+            "Authorization",
+            "X-API-Key",
+            "X-Model",
+            "X-Base-Url",
+        ],
     )
     application.include_router(router)
     return application
