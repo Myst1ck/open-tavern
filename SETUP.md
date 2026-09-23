@@ -198,6 +198,54 @@ podman cp $(podman-compose ps -q backend):/data/open_tavern.db ./open_tavern.db
 | `docker-compose.yml` | Defines `backend` + `frontend` services, `backend-data` volume, port mappings |
 | `.dockerignore` | Excludes `.git`, `node_modules`, `.env`, `*.md`, Dockerfiles from build context |
 
+## k3s Deployment (prod — `slave` cluster)
+
+Prod stack runs on the single-node k3s cluster (`slave`) in the `home` namespace,
+exposed at `https://slave.tail7c13f3.ts.net/tavern` via traefik. Manifests +
+full details: `deploy/k3s/README.md`. Images use `imagePullPolicy: Never` — they
+must exist in k3s containerd before apply.
+
+### First-time deploy
+
+```sh
+podman build -t localhost/open-tavern_backend:latest ./backend
+podman build --build-arg VITE_BASE=/tavern/ -t localhost/open-tavern_frontend:tavern ./frontend
+podman save localhost/open-tavern_backend:latest | ssh slave 'sudo k3s ctr images import -'
+podman save localhost/open-tavern_frontend:tavern | ssh slave 'sudo k3s ctr images import -'
+kubectl apply -f deploy/k3s/backend.yaml   # PVC first, backend waits for it
+kubectl apply -f deploy/k3s/frontend.yaml
+kubectl apply -f deploy/k3s/ingress.yaml
+kubectl -n home rollout status deploy/open-tavern-backend
+kubectl -n home rollout status deploy/open-tavern-frontend
+```
+
+Optional OpenAI key: `kubectl -n home create secret generic open-tavern-openai --from-literal=OPENAI_API_KEY=sk-...`
+
+### Update an image (verified 2026-09-23)
+
+```sh
+podman build -t localhost/open-tavern_backend:latest ./backend
+podman build --build-arg VITE_BASE=/tavern/ -t localhost/open-tavern_frontend:tavern ./frontend
+podman save localhost/open-tavern_backend:latest | ssh slave 'sudo k3s ctr images import -'
+podman save localhost/open-tavern_frontend:tavern | ssh slave 'sudo k3s ctr images import -'
+ssh slave 'sudo k3s kubectl -n home rollout restart deploy/open-tavern-backend deploy/open-tavern-frontend'
+ssh slave 'sudo k3s kubectl -n home rollout status deploy/open-tavern-backend --timeout=180s'
+ssh slave 'sudo k3s kubectl -n home rollout status deploy/open-tavern-frontend --timeout=180s'
+```
+
+`imagePullPolicy: Never` → rollout restart alone picks up the newly imported image, no registry needed.
+
+### k3s health check
+
+```sh
+curl -s -o /dev/null -w "%{http_code}\n" https://slave.tail7c13f3.ts.net/tavern/          # expect 200
+curl -s -o /dev/null -w "%{http_code}\n" https://slave.tail7c13f3.ts.net/tavern/sessions  # expect 200
+```
+
+- SQLite lives on the `open-tavern-data` PVC (local-path, 1Gi) at `/data/open_tavern.db`. Single replica only.
+- Frontend proxy target: `OPEN_TAVERN_PROXY_TARGET=http://backend:8000` (in-cluster service).
+- Frontend build MUST bake the subpath: `VITE_BASE=/tavern/`.
+
 ## Remote Access (LAN / Tailscale)
 
 Frontend is same-origin: `frontend/src/api.ts` uses an empty base URL, so requests
