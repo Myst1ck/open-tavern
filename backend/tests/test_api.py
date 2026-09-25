@@ -417,6 +417,49 @@ def test_get_per_request_client_empty_base_url_falls_back_to_env(monkeypatch):
     assert client.base_url == "http://env:8000/v1"
 
 
+def test_get_per_request_client_header_key_works_without_env(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+
+    client = get_per_request_client(
+        x_api_key="sk-from-settings",
+        x_model=None,
+        x_base_url=None,
+    )
+
+    assert isinstance(client, OpenAIClient)
+    assert client.api_key == "sk-from-settings"
+
+
+def test_get_per_request_client_keyless_local_base_url_allowed(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+
+    client = get_per_request_client(
+        x_api_key=None,
+        x_model=None,
+        x_base_url="http://localhost:11434/v1",
+    )
+
+    assert isinstance(client, OpenAIClient)
+    assert client.api_key == ""
+
+
+def test_get_per_request_client_missing_key_points_to_settings(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+
+    with pytest.raises(HTTPException) as excinfo:
+        get_per_request_client(
+            x_api_key=None,
+            x_model=None,
+            x_base_url="https://api.openai.com/v1",
+        )
+
+    assert excinfo.value.status_code == 503
+    assert "Settings" in excinfo.value.detail
+
+
 def test_build_client_from_headers_invalid_base_url_raises_400(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)

@@ -88,6 +88,31 @@ def _validate_base_url(url: str) -> None:
         raise ValueError(f"base URL host {parts.hostname!r} is not allowed")
 
 
+def is_local_base_url(url: str) -> bool:
+    """Return ``True`` when ``url`` points at a loopback/private host.
+
+    Local model servers (Ollama, LM Studio, llama.cpp) commonly run without an
+    API key, so callers use this to skip the key requirement for them. Only
+    literal ``localhost`` and loopback/private IP literals count; a hostname
+    that merely resolves to a private address is not treated as local.
+    """
+    try:
+        host = urlsplit(url).hostname
+    except ValueError:
+        return False
+    if not host:
+        return False
+    if host.lower() == "localhost":
+        return True
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        addr = addr.ipv4_mapped
+    return addr.is_loopback or addr.is_private
+
+
 class LLMClientError(RuntimeError):
     """Raised when an LLM request fails or returns a malformed response."""
 

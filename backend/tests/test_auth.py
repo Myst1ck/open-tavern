@@ -1,7 +1,8 @@
 """API behavior tests that previously lived alongside the bearer-token suite.
 
 ``OPENAI_API_KEY`` is optional: the app starts without it and only
-OpenAI-dependent requests fail (HTTP 503) until a key is supplied.
+OpenAI-dependent requests fail (HTTP 503) until a key is supplied. The Settings
+menu is the intended key source; the env var is a fallback.
 """
 
 from __future__ import annotations
@@ -53,4 +54,4 @@ def test_openai_request_503_without_key(monkeypatch, storage):
     resp = client.post("/sessions/any/character", json={"description": "elf"})
 
     assert resp.status_code == 503
-    assert "OPENAI_API_KEY" in resp.json()["detail"]
+    assert "Settings" in resp.json()["detail"]
