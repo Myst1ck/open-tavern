@@ -103,3 +103,46 @@ def test_chat_missing_content_raises_llm_client_error(monkeypatch):
 
     with pytest.raises(LLMClientError, match="LLM response missing content"):
         client.chat([{"role": "user", "content": "hi"}])
+
+
+def test_base_url_bare_openrouter_host_maps_to_api_root():
+    client = OpenAIClient(api_key="test-key", base_url="https://openrouter.ai")
+
+    assert client.base_url == "https://openrouter.ai/api/v1"
+
+
+def test_base_url_openrouter_trailing_slash_maps_to_api_root():
+    client = OpenAIClient(api_key="test-key", base_url="https://openrouter.ai/")
+
+    assert client.base_url == "https://openrouter.ai/api/v1"
+
+
+def test_base_url_with_path_unchanged():
+    client = OpenAIClient(api_key="test-key", base_url="https://openrouter.ai/api/v1")
+
+    assert client.base_url == "https://openrouter.ai/api/v1"
+
+
+def test_base_url_other_provider_unchanged():
+    client = OpenAIClient(api_key="test-key", base_url="https://api.openai.com/v1")
+
+    assert client.base_url == "https://api.openai.com/v1"
+
+
+def test_chat_targets_openrouter_api_root(monkeypatch):
+    captured: dict = {}
+
+    def handler(request):
+        captured["url"] = str(request.url)
+        return _ok_response()
+
+    monkeypatch.setattr(
+        client_module,
+        "_HTTP_CLIENT",
+        httpx.Client(transport=httpx.MockTransport(handler), timeout=60.0),
+    )
+    client = OpenAIClient(api_key="test-key", base_url="https://openrouter.ai")
+
+    client.chat([{"role": "user", "content": "hi"}])
+
+    assert captured["url"] == "https://openrouter.ai/api/v1/chat/completions"
