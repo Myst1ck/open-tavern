@@ -89,9 +89,48 @@ function settingsHeaders(settings: TavernSettings): Record<string, string> {
   return headers;
 }
 
+// ── DM narration style ─────────────────────────────────────────
+
+/** Preset tone key; mirrors the backend's `TONES` registry. */
+export type Tone = "classic" | "gritty" | "heroic" | "whimsical" | "comedic";
+
+/** Preset verbosity key; mirrors the backend's `VERBOSITIES` registry. */
+export type Verbosity = "standard" | "concise" | "rich";
+
+export interface DmStyle {
+  tone: Tone;
+  verbosity: Verbosity;
+  custom_tone: string;
+}
+
+export const TONE_OPTIONS: ReadonlyArray<{ value: Tone; label: string }> = [
+  { value: "classic", label: "Classic" },
+  { value: "gritty", label: "Gritty" },
+  { value: "heroic", label: "Heroic" },
+  { value: "whimsical", label: "Whimsical" },
+  { value: "comedic", label: "Comedic" },
+];
+
+export const VERBOSITY_OPTIONS: ReadonlyArray<{
+  value: Verbosity;
+  label: string;
+}> = [
+  { value: "standard", label: "Standard" },
+  { value: "concise", label: "Concise" },
+  { value: "rich", label: "Rich" },
+];
+
+/** Untouched default: the backend renders the classic prompt for this. */
+export const DEFAULT_DM_STYLE: DmStyle = {
+  tone: "classic",
+  verbosity: "standard",
+  custom_tone: "",
+};
+
 export interface Session {
   session_id: string;
   world_theme: string;
+  dm_style: DmStyle | null;
 }
 
 export interface SessionSummary {
@@ -117,6 +156,7 @@ export interface SessionDetail {
   state: GameState | null;
   character: CharacterSheet | null;
   messages: ChatMessage[];
+  dm_style: DmStyle | null;
 }
 
 export interface AbilityScores {
@@ -282,6 +322,7 @@ export function createSession(
   worldTheme: string,
   title?: string,
   premise?: string,
+  dmStyle?: DmStyle,
 ): Promise<Session> {
   return request<Session>("/sessions", {
     method: "POST",
@@ -289,6 +330,7 @@ export function createSession(
       world_theme: worldTheme,
       ...(title !== undefined ? { title } : {}),
       ...(premise !== undefined ? { premise } : {}),
+      ...(dmStyle !== undefined ? { dm_style: dmStyle } : {}),
     }),
   });
 }
@@ -317,6 +359,20 @@ export function renameSession(
 
 export function deleteSession(id: string): Promise<void> {
   return request<void>(`/sessions/${id}`, { method: "DELETE" });
+}
+
+/**
+ * Replace the session's DM narration style mid-game. The backend validates
+ * preset keys (422 on unknown) and echoes the normalized style.
+ */
+export function updateSessionStyle(
+  sessionId: string,
+  style: DmStyle,
+): Promise<DmStyle> {
+  return request<DmStyle>(`/sessions/${sessionId}/style`, {
+    method: "PUT",
+    body: JSON.stringify(style),
+  });
 }
 
 /**

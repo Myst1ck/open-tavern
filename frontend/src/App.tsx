@@ -3,8 +3,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   type CharacterSheet,
   createSession,
+  DEFAULT_DM_STYLE,
   deleteItem,
   deleteSession,
+  type DmStyle,
   equipItem,
   type GameState,
   getSession,
@@ -25,6 +27,7 @@ import CharacterCreationView from "./components/CharacterCreationView";
 import CharacterSheetView from "./components/CharacterSheet";
 import Chat, { type Message } from "./components/Chat";
 import CreateTaleCard from "./components/CreateTaleCard";
+import DmStylePanel from "./components/DmStylePanel";
 import FilterBar, { type FilterState } from "./components/FilterBar";
 import InstallButton from "./components/InstallButton";
 import InventoryGrid from "./components/InventoryGrid";
@@ -92,6 +95,7 @@ function InventoryPanel({ items, onItemClick }: InventoryPanelProps) {
 export default function App() {
   const [phase, setPhase] = useState<Phase>("home");
   const [session, setSession] = useState<Session | null>(null);
+  const [dmStyle, setDmStyle] = useState<DmStyle>(DEFAULT_DM_STYLE);
   const [character, setCharacter] = useState<CharacterSheet | null>(null);
   const [state, setState] = useState<GameState | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -202,16 +206,26 @@ export default function App() {
     setSettings(next);
   };
 
-  const handleStart = async (worldTheme: string, premise: string) => {
+  const handleStart = async (
+    worldTheme: string,
+    premise: string,
+    style: DmStyle,
+  ) => {
     setBusy(true);
     setError(null);
     try {
-      const created = await createSession(worldTheme, undefined, premise);
+      const created = await createSession(
+        worldTheme,
+        undefined,
+        premise,
+        style,
+      );
       setSession(created);
       // A fresh session resets any character progress from a prior world.
       setCharacter(null);
       setState(null);
       setMessages([]);
+      setDmStyle(style);
       setPhase("character");
     } catch (err) {
       setError(toMessage(err));
@@ -282,9 +296,11 @@ export default function App() {
       setSession({
         session_id: detail.meta.id,
         world_theme: detail.meta.world_theme,
+        dm_style: detail.dm_style,
       });
       setCharacter(character);
       setState(character !== null ? detail.state : null);
+      setDmStyle(detail.dm_style ?? DEFAULT_DM_STYLE);
       // Persisted transcript as-is; the AI opening is already the first
       // assistant message. No synthetic intro is injected here.
       const persisted: Message[] = detail.messages.map((message) => ({
@@ -406,7 +422,7 @@ export default function App() {
             onBack={handleBackToWorldGen}
           />
         )}
-        {phase === "play" && (
+        {phase === "play" && session !== null && (
           <>
             <button
               type="button"
@@ -440,6 +456,11 @@ export default function App() {
                     />
                   </section>
                 )}
+                <DmStylePanel
+                  sessionId={session.session_id}
+                  value={dmStyle}
+                  onChange={setDmStyle}
+                />
               </aside>
             </div>
             {selectedItem !== null && (

@@ -8,6 +8,7 @@ from open_tavern.character import normalize
 from open_tavern.dice import roll_expression
 from open_tavern.state import new_state
 from open_tavern.story import RollOutcome, TurnResult, turn
+from open_tavern.story.style import TONES, VERBOSITIES, DmStyle
 
 
 class FakeClient:
@@ -167,3 +168,22 @@ def test_turn_appends_player_action_and_final_narration_to_messages():
     assert history[0] in sent
     # player action is wrapped as untrusted data
     assert any("<player_action>" in message["content"] for message in sent)
+
+
+def test_turn_forwards_style_to_system_prompt():
+    state = new_state(_character())
+    client = FakeClient(["The alley stinks of fish."])
+    turn(
+        "I walk in",
+        state,
+        [],
+        client,
+        rng=random.Random(0),
+        style=DmStyle("gritty", "concise", "speak like a sea dog"),
+    )
+
+    system = client.calls[0]["messages"][0]["content"]
+    assert "NARRATION STYLE:" in system
+    assert TONES["gritty"] in system
+    assert VERBOSITIES["concise"] in system
+    assert "speak like a sea dog" in system

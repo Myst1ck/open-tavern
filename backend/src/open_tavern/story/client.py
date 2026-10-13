@@ -113,6 +113,37 @@ def is_local_base_url(url: str) -> bool:
     return addr.is_loopback or addr.is_private
 
 
+#: Provider site URLs whose OpenAI-compatible API root differs from the site
+#: root. OpenRouter's chat completions live at ``/api/v1`` beneath the site URL
+#: users know (``https://openrouter.ai``); posting to the bare site URL hits
+#: the marketing site and fails with a JSON decode error.
+_PROVIDER_API_ROOTS: dict[str, str] = {
+    "openrouter.ai": "/api/v1",
+    "www.openrouter.ai": "/api/v1",
+}
+
+
+def _normalize_base_url(url: str) -> str:
+    """Map a bare provider site URL to its OpenAI-compatible API root.
+
+    Only empty-path URLs are rewritten; URLs that already carry a path
+    (``https://openrouter.ai/api/v1``, ``http://localhost:11434/v1``) pass
+    through unchanged.
+    """
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return url  # malformed — _validate_base_url reports it
+    if (
+        parts.path in ("", "/")
+        and not parts.query
+        and not parts.fragment
+        and parts.hostname in _PROVIDER_API_ROOTS
+    ):
+        return f"{parts.scheme}://{parts.netloc}{_PROVIDER_API_ROOTS[parts.hostname]}"
+    return url
+
+
 class LLMClientError(RuntimeError):
     """Raised when an LLM request fails or returns a malformed response."""
 
@@ -129,11 +160,13 @@ class OpenAIClient:
         self.api_key = (
             api_key if api_key is not None else os.environ.get("OPENAI_API_KEY", "")
         )
-        self.base_url = (
-            base_url
-            if base_url is not None
-            else os.environ.get("OPENAI_BASE_URL", DEFAULT_BASE_URL)
-        ).rstrip("/")
+        self.base_url = _normalize_base_url(
+            (
+                base_url
+                if base_url is not None
+                else os.environ.get("OPENAI_BASE_URL", DEFAULT_BASE_URL)
+            ).rstrip("/")
+        )
         _validate_base_url(self.base_url)
         self.model = (
             model

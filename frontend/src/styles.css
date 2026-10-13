@@ -177,6 +177,7 @@ body {
 }
 
 input,
+select,
 textarea {
   width: 100%;
   padding: 0.65rem 0.8rem;
@@ -188,6 +189,7 @@ textarea {
 }
 
 input:focus,
+select:focus,
 textarea:focus {
   outline: none;
   border-color: var(--accent);
@@ -234,6 +236,28 @@ form button {
 }
 
 .muted {
+  color: var(--text-muted);
+}
+
+.saved-hint {
+  color: var(--success);
+  font-size: 0.9rem;
+  margin: 0.5rem 0 0;
+}
+
+.dm-style-panel button {
+  margin-top: 0.75rem;
+}
+
+.dm-voice {
+  margin-top: 0.75rem;
+}
+
+.dm-voice summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
   color: var(--text-muted);
 }
 
