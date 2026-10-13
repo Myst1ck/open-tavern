@@ -26,6 +26,7 @@ from open_tavern.character.items import BaseType, Item
 from open_tavern.state import GameState, new_state
 from open_tavern.storage import Storage
 from open_tavern.story import OpenAIClient
+from open_tavern.story.style import TONES, VERBOSITIES
 
 
 class FakeClient:
@@ -465,9 +466,7 @@ def test_build_client_from_headers_invalid_base_url_raises_400(monkeypatch):
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
 
     with pytest.raises(HTTPException) as excinfo:
-        build_client_from_headers(
-            api_key="sk-test", model="", base_url="not-a-url"
-        )
+        build_client_from_headers(api_key="sk-test", model="", base_url="not-a-url")
 
     assert excinfo.value.status_code == 400
 
@@ -710,9 +709,7 @@ def test_create_character_without_opening_appends_no_message(storage):
 
 def _session_with_character(client: TestClient, storage: Storage) -> str:
     session_id = storage.create_session("gothic")
-    resp = client.post(
-        f"/sessions/{session_id}/character", json={"description": "elf"}
-    )
+    resp = client.post(f"/sessions/{session_id}/character", json={"description": "elf"})
     assert resp.status_code == 200
     return session_id
 
@@ -845,9 +842,9 @@ def test_get_item_unknown_404(storage):
 def test_delete_item(storage):
     client = _make_client(storage, FakeClient([json.dumps(_valid_sheet_raw())]))
     session_id = _session_with_character(client, storage)
-    item_id = client.post(_item_url(session_id), json={"name": "Sword"}).json()[
-        "item"
-    ]["id"]
+    item_id = client.post(_item_url(session_id), json={"name": "Sword"}).json()["item"][
+        "id"
+    ]
 
     resp = client.delete(_item_url(session_id, item_id))
 
@@ -870,9 +867,9 @@ def test_delete_item_missing_returns_success_false(storage):
 def test_equip_item(storage):
     client = _make_client(storage, FakeClient([json.dumps(_valid_sheet_raw())]))
     session_id = _session_with_character(client, storage)
-    item_id = client.post(_item_url(session_id), json={"name": "Sword"}).json()[
-        "item"
-    ]["id"]
+    item_id = client.post(_item_url(session_id), json={"name": "Sword"}).json()["item"][
+        "id"
+    ]
 
     resp = client.post(_item_url(session_id, f"{item_id}/equip"))
 
@@ -884,9 +881,9 @@ def test_equip_item(storage):
 def test_unequip_item(storage):
     client = _make_client(storage, FakeClient([json.dumps(_valid_sheet_raw())]))
     session_id = _session_with_character(client, storage)
-    item_id = client.post(_item_url(session_id), json={"name": "Sword"}).json()[
-        "item"
-    ]["id"]
+    item_id = client.post(_item_url(session_id), json={"name": "Sword"}).json()["item"][
+        "id"
+    ]
     client.post(_item_url(session_id, f"{item_id}/equip"))
 
     resp = client.post(_item_url(session_id, f"{item_id}/unequip"))
@@ -1018,3 +1015,150 @@ def test_world_generate_rate_limited(storage, monkeypatch):
 
     resp = client.post("/world/generate", json={"description": "spooky"})
     assert resp.status_code == 429
+
+
+# --- dm style ---
+
+
+def test_create_session_echoes_normalized_dm_style(storage):
+    client = _make_client(storage, FakeClient([]))
+
+    resp = client.post(
+        "/sessions",
+        json={
+            "world_theme": "gothic",
+            "dm_style": {"tone": "gritty", "custom_tone": "speak like a sea dog"},
+        },
+    )
+    assert resp.status_code == 201
+    assert resp.json()["dm_style"] == {
+        "tone": "gritty",
+        "verbosity": "standard",
+        "custom_tone": "speak like a sea dog",
+    }
+
+
+def test_create_session_without_dm_style_echoes_none(storage):
+    client = _make_client(storage, FakeClient([]))
+
+    resp = client.post("/sessions", json={"world_theme": "gothic"})
+    assert resp.status_code == 201
+    assert resp.json()["dm_style"] is None
+
+
+def test_create_session_rejects_unknown_tone_or_verbosity(storage):
+    client = _make_client(storage, FakeClient([]))
+
+    for body in ({"tone": "purple"}, {"verbosity": "purple"}):
+        resp = client.post(
+            "/sessions", json={"world_theme": "gothic", "dm_style": body}
+        )
+        assert resp.status_code == 422
+
+
+def test_update_session_style_roundtrip(storage):
+    session_id = storage.create_session("gothic")
+    client = _make_client(storage, FakeClient([]))
+
+    resp = client.put(
+        f"/sessions/{session_id}/style",
+        json={"tone": "heroic", "verbosity": "rich", "custom_tone": "sing"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "tone": "heroic",
+        "verbosity": "rich",
+        "custom_tone": "sing",
+    }
+
+    detail = client.get(f"/sessions/{session_id}").json()
+    assert detail["dm_style"] == resp.json()
+
+
+def test_update_session_style_unknown_session_404(storage):
+    client = _make_client(storage, FakeClient([]))
+
+    resp = client.put("/sessions/nope/style", json={"tone": "gritty"})
+    assert resp.status_code == 404
+
+
+def test_create_character_prompt_includes_opening_style(storage):
+    fake = FakeClient([json.dumps(_valid_sheet_raw())])
+    client = _make_client(storage, fake)
+    session_id = client.post(
+        "/sessions",
+        json={
+            "world_theme": "gothic",
+            "dm_style": {
+                "tone": "gritty",
+                "verbosity": "concise",
+                "custom_tone": "speak like a sea dog",
+            },
+        },
+    ).json()["session_id"]
+
+    resp = client.post(f"/sessions/{session_id}/character", json={"description": "elf"})
+    assert resp.status_code == 200
+
+    prompt = fake.calls[0]["messages"][0]["content"]
+    assert "OPENING NARRATION STYLE:" in prompt
+    assert TONES["gritty"] in prompt
+    assert VERBOSITIES["concise"] in prompt
+    assert "speak like a sea dog" in prompt
+
+
+def test_send_action_system_prompt_uses_dm_style(storage):
+    fake = FakeClient([json.dumps(_valid_sheet_raw()), "You settle in for the night."])
+    client = _make_client(storage, fake)
+    session_id = client.post(
+        "/sessions",
+        json={
+            "world_theme": "gothic",
+            "dm_style": {
+                "tone": "gritty",
+                "verbosity": "concise",
+                "custom_tone": "speak like a sea dog",
+            },
+        },
+    ).json()["session_id"]
+    client.post(f"/sessions/{session_id}/character", json={"description": "elf"})
+
+    resp = client.post(
+        f"/sessions/{session_id}/actions", json={"action": "I look around"}
+    )
+    assert resp.status_code == 200
+
+    system = fake.calls[1]["messages"][0]["content"]
+    assert "NARRATION STYLE:" in system
+    assert TONES["gritty"] in system
+    assert VERBOSITIES["concise"] in system
+    assert "speak like a sea dog" in system
+
+
+def test_mid_game_style_update_applies_to_next_turn(storage):
+    fake = FakeClient(
+        [
+            json.dumps(_valid_sheet_raw()),
+            "You settle in for the night.",
+            "The crowd laughs.",
+        ]
+    )
+    client = _make_client(storage, fake)
+    session_id = client.post("/sessions", json={"world_theme": "gothic"}).json()[
+        "session_id"
+    ]
+    client.post(f"/sessions/{session_id}/character", json={"description": "elf"})
+
+    resp = client.post(
+        f"/sessions/{session_id}/actions", json={"action": "I look around"}
+    )
+    assert resp.status_code == 200
+    assert "NARRATION STYLE:" not in fake.calls[1]["messages"][0]["content"]
+
+    resp = client.put(f"/sessions/{session_id}/style", json={"tone": "comedic"})
+    assert resp.status_code == 200
+
+    resp = client.post(f"/sessions/{session_id}/actions", json={"action": "I laugh"})
+    assert resp.status_code == 200
+    system = fake.calls[2]["messages"][0]["content"]
+    assert TONES["comedic"] in system

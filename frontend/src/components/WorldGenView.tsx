@@ -1,9 +1,14 @@
 import { type FormEvent, useState } from "react";
 
-import { generateWorld } from "../api";
+import { DEFAULT_DM_STYLE, type DmStyle, generateWorld } from "../api";
+import { DmStyleFields } from "./DmStylePanel";
 
 export interface WorldGenViewProps {
-  onAccept: (theme: string, premise: string) => Promise<void> | void;
+  onAccept: (
+    theme: string,
+    premise: string,
+    style: DmStyle,
+  ) => Promise<void> | void;
   onBack: () => void;
 }
 
@@ -21,15 +26,13 @@ function toMessage(err: unknown): string {
  * surprised); the backend returns a theme + premise, which the player may
  * regenerate or accept. No session exists until "Accept" is clicked.
  */
-export default function WorldGenView({
-  onAccept,
-  onBack,
-}: WorldGenViewProps) {
+export default function WorldGenView({ onAccept, onBack }: WorldGenViewProps) {
   const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<WorldPreview | null>(null);
   const [lastSurprise, setLastSurprise] = useState(false);
+  const [style, setStyle] = useState<DmStyle>(DEFAULT_DM_STYLE);
 
   const handleGenerate = async (surprise: boolean) => {
     if (busy) {
@@ -67,7 +70,7 @@ export default function WorldGenView({
     setBusy(true);
     setError(null);
     try {
-      await onAccept(preview.theme, preview.premise);
+      await onAccept(preview.theme, preview.premise, style);
     } catch (err) {
       setError(toMessage(err));
     } finally {
@@ -111,13 +114,22 @@ export default function WorldGenView({
           </button>
         </div>
       </form>
+      <details className="dm-voice">
+        <summary>DM voice</summary>
+        <p className="muted">Shape how the game master narrates.</p>
+        <DmStyleFields value={style} onChange={setStyle} disabled={busy} />
+      </details>
       {error !== null && <p className="error">{error}</p>}
       {preview !== null && (
         <div className="panel world-preview">
           <h3>{preview.theme}</h3>
           <p className="muted">{preview.premise}</p>
           <div className="refine-actions">
-            <button type="button" onClick={() => void handleAccept()} disabled={busy}>
+            <button
+              type="button"
+              onClick={() => void handleAccept()}
+              disabled={busy}
+            >
               Accept
             </button>
             <button
