@@ -431,14 +431,18 @@ export default function App() {
         )}
         {phase === "play" && session !== null && (
           <>
-            <button
-              type="button"
-              className="back-button"
-              onClick={handleBackToHome}
-            >
-              ← Back to tales
-            </button>
-            <PlayTabs active={playTab} onChange={setPlayTab} />
+            <div className="play-topbar">
+              <button
+                type="button"
+                className="back-button play-back"
+                aria-label="Back to tales"
+                title="Back to tales"
+                onClick={handleBackToHome}
+              >
+                ← Tales
+              </button>
+              <PlayTabs active={playTab} onChange={setPlayTab} />
+            </div>
             <div className="play-content">
               {/* Chat stays mounted so scroll position and input survive tab
                   round-trips; hidden via CSS rather than unmounted. */}
