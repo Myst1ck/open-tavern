@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
+  type ActionKind,
   type CharacterSheet,
   createSession,
   DEFAULT_DM_STYLE,
@@ -33,6 +34,7 @@ import InstallButton from "./components/InstallButton";
 import InventoryGrid from "./components/InventoryGrid";
 import ItemModal from "./components/ItemModal";
 import ItemTooltip from "./components/ItemTooltip";
+import PlayTabs, { type PlayTabId } from "./components/PlayTabs";
 import SavedTalesList from "./components/SavedTalesList";
 import SettingsPanel from "./components/SettingsPanel";
 import StateView from "./components/StateView";
@@ -111,6 +113,7 @@ export default function App() {
   });
   const [selectedItem, setSelectedItem] = useState<Item | null>(null);
   const [itemBusy, setItemBusy] = useState(false);
+  const [playTab, setPlayTab] = useState<PlayTabId>("campaign");
 
   const refreshSessions = async () => {
     setSessionsBusy(true);
@@ -259,6 +262,7 @@ export default function App() {
       return;
     }
     setCharacter(character);
+    setPlayTab("campaign");
     setPhase("play");
     const fallback: Message = {
       id: newId(),
@@ -310,6 +314,7 @@ export default function App() {
         rolls: [],
       }));
       setMessages(persisted);
+      setPlayTab("campaign");
       setPhase("play");
     } catch (err) {
       setError(toMessage(err));
@@ -343,11 +348,12 @@ export default function App() {
     setState(null);
     setMessages([]);
     setError(null);
+    setPlayTab("campaign");
     setPhase("home");
     void refreshSessions();
   };
 
-  const handleSendAction = async (action: string) => {
+  const handleSendAction = async (action: string, kind: ActionKind) => {
     if (session === null || busy) {
       return;
     }
@@ -356,12 +362,13 @@ export default function App() {
     const playerMessage: Message = {
       id: newId(),
       role: "player",
-      content: action,
+      content: kind === "continue" ? "" : action,
       rolls: [],
+      kind,
     };
     setMessages((prev) => [...prev, playerMessage]);
     try {
-      const response = await sendAction(session.session_id, action);
+      const response = await sendAction(session.session_id, action, kind);
       const gmMessage: Message = {
         id: newId(),
         role: "gm",
@@ -424,26 +431,54 @@ export default function App() {
         )}
         {phase === "play" && session !== null && (
           <>
-            <button
-              type="button"
-              className="back-button"
-              onClick={handleBackToHome}
-            >
-              ← Back to tales
-            </button>
-            <div className="play-grid">
-              <Chat
-                messages={messages}
-                busy={busy}
-                error={error}
-                onSend={handleSendAction}
-              />
-              <aside className="play-sidebar">
-                <StateView state={state} />
-                {character !== null && (
-                  <CharacterSheetView character={character} />
-                )}
-                {character !== null && character.inventory.length > 0 && (
+            <div className="play-topbar">
+              <button
+                type="button"
+                className="back-button play-back"
+                aria-label="Back to tales"
+                title="Back to tales"
+                onClick={handleBackToHome}
+              >
+                ← Tales
+              </button>
+              <PlayTabs active={playTab} onChange={setPlayTab} />
+            </div>
+            <div className="play-content">
+              {/* Chat stays mounted so scroll position and input survive tab
+                  round-trips; hidden via CSS rather than unmounted. */}
+              <div
+                className={`play-tab-panel${playTab === "campaign" ? "" : " play-tab-hidden"}`}
+                role="tabpanel"
+                id="play-panel-campaign"
+                aria-labelledby="play-tab-campaign"
+              >
+                <Chat
+                  messages={messages}
+                  busy={busy}
+                  error={error}
+                  onSend={handleSendAction}
+                />
+              </div>
+              {playTab === "character" && (
+                <div
+                  className="play-tab-panel"
+                  role="tabpanel"
+                  id="play-panel-character"
+                  aria-labelledby="play-tab-character"
+                >
+                  <StateView state={state} />
+                  {character !== null && (
+                    <CharacterSheetView character={character} />
+                  )}
+                </div>
+              )}
+              {playTab === "inventory" && (
+                <div
+                  className="play-tab-panel"
+                  role="tabpanel"
+                  id="play-panel-inventory"
+                  aria-labelledby="play-tab-inventory"
+                >
                   <section className="panel">
                     <h2>Inventory</h2>
                     <FilterBar
@@ -455,13 +490,22 @@ export default function App() {
                       onItemClick={handleItemClick}
                     />
                   </section>
-                )}
-                <DmStylePanel
-                  sessionId={session.session_id}
-                  value={dmStyle}
-                  onChange={setDmStyle}
-                />
-              </aside>
+                </div>
+              )}
+              {playTab === "dm-style" && (
+                <div
+                  className="play-tab-panel"
+                  role="tabpanel"
+                  id="play-panel-dm-style"
+                  aria-labelledby="play-tab-dm-style"
+                >
+                  <DmStylePanel
+                    sessionId={session.session_id}
+                    value={dmStyle}
+                    onChange={setDmStyle}
+                  />
+                </div>
+              )}
             </div>
             {selectedItem !== null && (
               <ItemModal

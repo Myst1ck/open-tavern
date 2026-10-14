@@ -9,7 +9,7 @@ Tuples and frozensets become lists so the payloads encode cleanly.
 from __future__ import annotations
 
 from dataclasses import asdict
-from typing import Annotated, Any, overload
+from typing import Annotated, Any, Literal, overload
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -163,9 +163,14 @@ class ClassResponse(BaseModel):
 
 
 class ActionRequest(BaseModel):
-    """Request body for submitting a player action."""
+    """Request body for submitting a player action.
+
+    ``kind`` defaults to ``"act"`` so legacy bodies carrying only ``action``
+    remain valid.
+    """
 
     action: str = Field(max_length=2000)
+    kind: Literal["say", "act", "continue"] = "act"
 
 
 class ActionResponse(BaseModel):

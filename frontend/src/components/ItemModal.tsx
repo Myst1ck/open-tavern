@@ -32,14 +32,14 @@ export default function ItemModal({
       "input",
       "select",
       "textarea",
-      'a[href]',
+      "a[href]",
       '[tabindex]:not([tabindex="-1"])',
     ].join(", ");
 
     const getFocusable = () => {
       if (!dialog) return [];
       return Array.from(
-        dialog.querySelectorAll<HTMLElement>(focusableSelector)
+        dialog.querySelectorAll<HTMLElement>(focusableSelector),
       ).filter((el) => !el.hasAttribute("disabled"));
     };
 

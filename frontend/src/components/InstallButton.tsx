@@ -84,11 +84,7 @@ export default function InstallButton() {
 
   if (canInstall) {
     return (
-      <button
-        type="button"
-        className="install-button"
-        onClick={handleInstall}
-      >
+      <button type="button" className="install-button" onClick={handleInstall}>
         Install app
       </button>
     );

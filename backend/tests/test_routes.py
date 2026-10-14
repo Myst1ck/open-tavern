@@ -1,8 +1,11 @@
-"""Concurrency tests for session lock refcount protocol in routes.
+"""Tests for session lock refcount protocol and ActionRequest validation.
 
 Covers the delete_session fix: the session lock must be acquired before
 deleting, and the ``_SESSION_LOCKS`` entry must only be removed when the
-refcount reaches zero (no unconditional pop).
+refcount reaches zero (no unconditional pop). Also covers the ``kind``
+field on :class:`ActionRequest`: the ``"act"`` default keeps legacy
+action-only bodies valid, ``"say"``/``"continue"`` are accepted, and an
+unknown kind is rejected with 422.
 """
 
 from __future__ import annotations
@@ -20,6 +23,7 @@ from open_tavern.api.routes import (
     get_client,
     get_storage,
 )
+from open_tavern.character import normalize
 from open_tavern.storage import Storage
 
 
@@ -137,3 +141,50 @@ def test_concurrent_actions_and_delete_no_crash_no_deadlock(storage):
     assert all(not t.is_alive() for t in threads), "deadlock: thread(s) hung"
     assert session_id not in _SESSION_LOCKS
     assert not storage.session_exists(session_id)
+
+
+# --- ActionRequest kind field --------------------------------------------
+
+
+_MINIMAL_SHEET_RAW = {
+    "name": "Thorn",
+    "race": "elf",
+    "character_class": "ranger",
+    "level": 1,
+    "abilities": {"STR": 12, "DEX": 16, "CON": 13, "INT": 10, "WIS": 14, "CHA": 9},
+}
+
+
+def _seed_character(storage: Storage, session_id: str) -> None:
+    """Persist a normalized character sheet directly (no LLM involved)."""
+    storage.save_character(session_id, normalize(_MINIMAL_SHEET_RAW))
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"action": "look around"},
+        {"action": "I greet the barkeep", "kind": "say"},
+        {"action": "", "kind": "continue"},
+    ],
+)
+def test_action_request_accepts_legacy_body_and_valid_kinds(storage, body):
+    """Legacy action-only bodies default to "act"; say/continue are accepted."""
+    client = _make_client(storage, FakeClient(["You act."]))
+    session_id = storage.create_session("gothic")
+    _seed_character(storage, session_id)
+
+    resp = client.post(f"/sessions/{session_id}/actions", json=body)
+
+    assert resp.status_code == 200
+
+
+def test_action_request_rejects_unknown_kind(storage):
+    """An unknown kind fails Literal validation with 422."""
+    client = _make_client(storage, FakeClient([]))
+    session_id = storage.create_session("gothic")
+
+    resp = client.post(f"/sessions/{session_id}/actions", json={"kind": "bogus"})
+
+    assert resp.status_code == 422
+    assert any("kind" in err["loc"] for err in resp.json()["detail"])

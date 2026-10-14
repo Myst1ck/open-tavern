@@ -1,3 +1,5 @@
+import ReactMarkdown from "react-markdown";
+
 import type { GameState } from "../api";
 
 interface StateViewProps {
@@ -36,7 +38,9 @@ export default function StateView({ state }: StateViewProps) {
       </div>
       <div className="state-scene">
         <h3>Scene</h3>
-        <p>{state.scene}</p>
+        <div className="prose">
+          <ReactMarkdown>{state.scene}</ReactMarkdown>
+        </div>
       </div>
       <h3>Conditions</h3>
       {state.conditions.length === 0 ? (

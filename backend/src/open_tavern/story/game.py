@@ -87,17 +87,21 @@ def turn(
     rng: random.Random | None = None,
     premise: str | None = None,
     style: DmStyle | None = None,
+    *,
+    kind: str = "act",
 ) -> TurnResult:
     """Process one player ``action`` against ``state`` and return a result.
 
     ``history`` is a read-only list of ``{"role", "content"}`` messages. The
     caller appends the player action and final narration after this returns.
+    ``kind`` selects the player mode ("say", "act", or "continue"); it frames
+    the player message for the GM and is not persisted.
     """
     system = _build_system_prompt(state, premise=premise, style=style)
     messages: list[dict[str, str]] = [
         {"role": "system", "content": system},
         *_recent_history(history, _MAX_HISTORY_MESSAGES),
-        {"role": "user", "content": user_action_prompt(action)},
+        {"role": "user", "content": user_action_prompt(action, kind)},
     ]
 
     first = client.chat(messages)

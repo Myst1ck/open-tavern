@@ -268,6 +268,10 @@ export interface ActionResponse {
   rolls: RollOutcome[];
 }
 
+/** How a player action is framed: in-character speech, declared action, or a
+ * text-free scene continuation. Mirrors the backend `ActionRequest.kind`. */
+export type ActionKind = "say" | "act" | "continue";
+
 export class ApiError extends Error {
   readonly status: number;
 
@@ -483,12 +487,13 @@ export function generateClass(
 export function sendAction(
   sessionId: string,
   action: string,
+  kind: ActionKind = "act",
 ): Promise<ActionResponse> {
   return request<ActionResponse>(
     `/sessions/${sessionId}/actions`,
     {
       method: "POST",
-      body: JSON.stringify({ action }),
+      body: JSON.stringify({ action, kind }),
     },
     LLM_TIMEOUT_MS,
   );
