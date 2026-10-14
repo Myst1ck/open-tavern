@@ -76,19 +76,56 @@ body {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
-.play-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
-  gap: 1.25rem;
-  align-items: start;
+.play-tabs {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  margin-bottom: 1.25rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
 }
 
-.play-sidebar {
+.play-tab {
+  flex: 1;
+  margin-top: 0;
+  min-height: 44px;
+  padding: 0.5rem 0.75rem;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.play-tab:hover:not(:disabled) {
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.play-tab.active,
+.play-tab.active:hover:not(:disabled) {
+  background: var(--panel-2);
+  border-color: var(--border);
+  color: var(--accent);
+}
+
+.play-content {
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
-  max-height: calc(100vh - 8rem);
-  overflow-y: auto;
+}
+
+.play-tab-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.play-tab-hidden {
+  display: none;
 }
 
 .chat-panel {
@@ -98,14 +135,21 @@ body {
   min-height: 400px;
 }
 
+/* Virtuoso scroller: flex child of .chat-panel. min-height:0 lets it shrink
+   below its content height so the internal scrollbar actually fires. */
 .chat-list {
   flex: 1;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
+  min-height: 0;
   padding-right: 0.25rem;
   margin-bottom: 0.75rem;
+}
+
+/* Wrapper around each virtualized bubble. Spacing uses bottom padding (not a
+   margin) so Virtuoso measures each row at its true height. */
+.chat-row {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 0.75rem;
 }
 
 .chat-empty {
@@ -122,7 +166,26 @@ body {
 
 .chat-message p {
   margin: 0.25rem 0 0;
-  white-space: pre-wrap;
+}
+
+/* Say turns are quoted in-character; CSS supplies the curly quotes. */
+.chat-message.player.say .chat-prose {
+  font-style: italic;
+}
+
+.chat-message.player.say .chat-prose::before {
+  content: "\201C";
+}
+
+.chat-message.player.say .chat-prose::after {
+  content: "\201D";
+}
+
+/* Continue / empty content collapses to a muted placeholder bubble. */
+.chat-message.placeholder .chat-placeholder {
+  margin: 0.25rem 0 0;
+  color: var(--text-muted);
+  font-style: italic;
 }
 
 .chat-message.player {
@@ -165,11 +228,40 @@ body {
 
 .chat-form {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 0.6rem;
+}
+
+.chat-form button {
+  margin-top: 0;
 }
 
 .chat-form input {
   flex: 1;
+  min-width: 0;
+}
+
+/* Say | Act | Continue segmented control beside the input. */
+.mode-switch {
+  display: flex;
+  flex-shrink: 0;
+  gap: 0.25rem;
+}
+
+.mode-switch button {
+  padding: 0.65rem 0.8rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.mode-switch button.active {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+  color: #1a120a;
 }
 
 .chat-error {
@@ -450,6 +542,72 @@ h3 {
   color: var(--text-muted);
 }
 
+/* Markdown prose fields (scene, personality/appearance/motivation,
+   backstory). Rendered via ReactMarkdown inside .prose. */
+.prose {
+  line-height: 1.5;
+}
+
+.prose p {
+  margin: 0.4rem 0 0;
+}
+
+.prose p:first-child {
+  margin-top: 0;
+}
+
+.prose ul,
+.prose ol {
+  margin: 0.4rem 0 0;
+  padding-left: 1.25rem;
+}
+
+.prose li + li {
+  margin-top: 0.2rem;
+}
+
+.prose strong {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.prose em {
+  font-style: italic;
+}
+
+/* Markdown body of chat messages (Chat.tsx). Scoped separately from .prose so
+   bubble typography can drift from sheet prose. */
+.chat-prose {
+  line-height: 1.5;
+}
+
+.chat-prose p {
+  margin: 0.25rem 0 0;
+}
+
+.chat-prose p:first-child {
+  margin-top: 0;
+}
+
+.chat-prose ul,
+.chat-prose ol {
+  margin: 0.4rem 0 0;
+  padding-left: 1.25rem;
+}
+
+.chat-prose li + li {
+  margin-top: 0.2rem;
+}
+
+.chat-prose strong {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.chat-prose em {
+  font-style: italic;
+}
+
 .sheet-stats {
   display: flex;
   gap: 1rem;
@@ -636,17 +794,9 @@ h3 {
 }
 
 @media (max-width: 900px) {
-  .play-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .chat-panel,
-  .play-sidebar {
+  .chat-panel {
     height: auto;
     max-height: none;
-  }
-
-  .chat-panel {
     min-height: 60vh;
   }
 }
@@ -654,6 +804,12 @@ h3 {
 @media (max-width: 480px) {
   .app-main {
     padding: 0.75rem;
+  }
+
+  /* Two rows of two so every tab keeps a >=44px touch target. */
+  .play-tabs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .chat-message {
