@@ -809,6 +809,53 @@ h3 {
     padding: 0.75rem;
   }
 
+  /* Keep the bar one line: shrink the brand, ellipsize the session tag. */
+  .app-header {
+    gap: 0.5rem;
+    padding: 0.75rem;
+    flex-wrap: nowrap;
+  }
+
+  .app-header h1 {
+    flex-shrink: 0;
+    font-size: 1rem;
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+  }
+
+  .session-tag {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .install-button {
+    flex-shrink: 0;
+    padding: 0.4rem 0.6rem;
+    font-size: 0.75rem;
+    white-space: nowrap;
+  }
+
+  /* Composer: the input owns a full-width row so typing stays usable;
+     the mode toggle and Send share the row below at equal width. */
+  .chat-form input {
+    flex: 1 1 100%;
+    order: -1;
+  }
+
+  .mode-toggle,
+  .send-button {
+    flex: 1 1 0;
+    justify-content: center;
+  }
+
+  /* Equal padding so flex-basis floors match and the buttons split 50/50. */
+  .send-button {
+    padding: 0.65rem 0.8rem;
+  }
+
   /* Two rows of two so every tab keeps a >=44px touch target. */
   .play-tabs {
     display: grid;

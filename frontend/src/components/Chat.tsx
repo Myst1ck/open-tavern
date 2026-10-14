@@ -132,6 +132,7 @@ export default function Chat({ messages, busy, error, onSend }: ChatProps) {
         />
         <button
           type="submit"
+          className="send-button"
           disabled={busy || (!isContinue && input.trim() === "")}
         >
           {busy ? "..." : "Send"}
