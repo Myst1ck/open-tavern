@@ -62,17 +62,19 @@ body {
 
 .app-main {
   flex: 1;
+  display: flex;
+  flex-direction: column;
   width: 100%;
   max-width: 1200px;
   margin: 0 auto;
-  padding: 1.25rem;
+  padding: 1.75rem;
 }
 
 .panel {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 1.25rem;
+  padding: 1.5rem;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
@@ -115,15 +117,17 @@ body {
 }
 
 .play-content {
+  flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: 1.5rem;
 }
 
 .play-tab-panel {
+  flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: 1.5rem;
 }
 
 .play-tab-hidden {
@@ -133,10 +137,9 @@ body {
 .chat-panel {
   display: flex;
   flex-direction: column;
-  /* 10.5rem (168px) of chrome around the panel: app-header (65px) +
-     app-main padding (20px top/bottom) + the merged play topbar row (~54px:
-     44px tabs + container padding/border, chip stretches to match) + slack. */
-  height: calc(100vh - 10.5rem);
+  /* Grows to fill the viewport via the flex chain: app-main (column) →
+     play-content → play-tab-panel → chat-panel all carry flex: 1. */
+  flex: 1;
   min-height: 400px;
 }
 
@@ -145,8 +148,8 @@ body {
 .chat-list {
   flex: 1;
   min-height: 0;
-  padding-right: 0.25rem;
-  margin-bottom: 0.75rem;
+  padding-right: 0.5rem;
+  margin-bottom: 1rem;
 }
 
 /* Wrapper around each virtualized bubble. Spacing uses bottom padding (not a
@@ -154,7 +157,7 @@ body {
 .chat-row {
   display: flex;
   flex-direction: column;
-  padding-bottom: 0.75rem;
+  padding-bottom: 1rem;
 }
 
 .chat-empty {
@@ -235,7 +238,7 @@ body {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.6rem;
+  gap: 0.75rem;
 }
 
 .chat-form button {
@@ -433,6 +436,7 @@ form button {
   display: flex;
   align-items: stretch;
   gap: 0.5rem;
+  margin-bottom: 1.5rem;
 }
 
 .play-topbar .play-back {
@@ -653,7 +657,7 @@ h3 {
   margin: 0;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 0.5rem;
+  gap: 0.75rem;
 }
 
 .ability-grid li {
@@ -683,7 +687,7 @@ h3 {
   margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 0.4rem;
   font-size: 0.88rem;
 }
 
@@ -725,7 +729,7 @@ h3 {
   margin: 0;
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
+  gap: 0.5rem;
 }
 
 .chip {
@@ -742,7 +746,7 @@ h3 {
   margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.65rem;
   font-size: 0.88rem;
 }
 
@@ -824,17 +828,9 @@ h3 {
   color: #d6c7ab;
 }
 
-@media (max-width: 900px) {
-  .chat-panel {
-    height: auto;
-    max-height: none;
-    min-height: 70vh;
-  }
-}
-
 @media (max-width: 480px) {
   .app-main {
-    padding: 0.75rem;
+    padding: 1rem;
   }
 
   /* Keep the bar one line: shrink the brand, ellipsize the session tag. */
@@ -969,8 +965,8 @@ h3 {
 .inventory-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 0.6rem;
-  margin-top: 0.5rem;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
 }
 
 .inventory-card {
