@@ -29,6 +29,12 @@ const MODE_LABELS: Record<ActionKind, string> = {
   continue: "Continue",
 };
 
+const MODE_PLACEHOLDERS: Record<ActionKind, string> = {
+  say: "What do you say?",
+  act: "Describe your action...",
+  continue: "The scene advances without text",
+};
+
 /** Sticky action mode, read lazily on mount (defaults to "act"). */
 function readStoredMode(): ActionKind {
   const stored = window.localStorage.getItem(MODE_STORAGE_KEY);
@@ -48,6 +54,12 @@ export default function Chat({ messages, busy, error, onSend }: ChatProps) {
     // not destroy what the user typed, so it round-trips back to say/act.
     setMode(next);
     window.localStorage.setItem(MODE_STORAGE_KEY, next);
+  };
+
+  // One button cycles the mode (say -> act -> continue -> say) so the input
+  // keeps its width on narrow screens.
+  const cycleMode = () => {
+    selectMode(MODES[(MODES.indexOf(mode) + 1) % MODES.length]);
   };
 
   const handleSubmit = (event: FormEvent) => {
@@ -88,24 +100,33 @@ export default function Chat({ messages, busy, error, onSend }: ChatProps) {
       )}
       {error !== null && <p className="error chat-error">{error}</p>}
       <form className="chat-form" onSubmit={handleSubmit}>
-        <div className="mode-switch" role="group" aria-label="Action mode">
-          {MODES.map((value) => (
-            <button
-              key={value}
-              type="button"
-              className={value === mode ? "active" : undefined}
-              aria-pressed={value === mode}
-              disabled={busy}
-              onClick={() => selectMode(value)}
-            >
-              {MODE_LABELS[value]}
-            </button>
-          ))}
-        </div>
+        <button
+          type="button"
+          className="mode-toggle"
+          onClick={cycleMode}
+          disabled={busy}
+          title={`Action mode: ${MODE_LABELS[mode]} — click to switch`}
+          aria-label={`Action mode: ${MODE_LABELS[mode]}. Click to switch.`}
+        >
+          {MODE_LABELS[mode]}
+          <svg
+            className="mode-toggle-icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M21 4v6h-6" />
+            <path d="M21 10a9 9 0 1 1-2.12-9.36L21 10" />
+          </svg>
+        </button>
         <input
           value={input}
           onChange={(event) => setInput(event.target.value)}
-          placeholder="Describe your action..."
+          placeholder={MODE_PLACEHOLDERS[mode]}
           disabled={busy || isContinue}
           aria-label="Action input"
         />
@@ -113,7 +134,7 @@ export default function Chat({ messages, busy, error, onSend }: ChatProps) {
           type="submit"
           disabled={busy || (!isContinue && input.trim() === "")}
         >
-          {busy ? "..." : MODE_LABELS[mode]}
+          {busy ? "..." : "Send"}
         </button>
       </form>
     </section>

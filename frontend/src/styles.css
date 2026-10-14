@@ -242,26 +242,29 @@ body {
   min-width: 0;
 }
 
-/* Say | Act | Continue segmented control beside the input. */
-.mode-switch {
-  display: flex;
+/* Single action-mode button: each click cycles say -> act -> continue. */
+.mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
   flex-shrink: 0;
-  gap: 0.25rem;
-}
-
-.mode-switch button {
   padding: 0.65rem 0.8rem;
   background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  color: var(--text-muted);
+  border: 1px solid var(--accent);
+  color: var(--accent);
   font-size: 0.9rem;
+  white-space: nowrap;
 }
 
-.mode-switch button.active {
-  background: var(--accent-strong);
+.mode-toggle-icon {
+  width: 0.85em;
+  height: 0.85em;
+}
+
+.mode-toggle:hover:not(:disabled) {
+  background: transparent;
   border-color: var(--accent-strong);
-  color: #1a120a;
+  color: var(--accent-strong);
 }
 
 .chat-error {
