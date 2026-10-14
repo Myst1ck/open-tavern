@@ -58,7 +58,10 @@ export default function PlayTabs({ active, onChange }: PlayTabsProps) {
             id={`play-tab-${tab.id}`}
             className={`play-tab${selected ? " active" : ""}`}
             aria-selected={selected}
-            aria-controls={`play-panel-${tab.id}`}
+            // Inactive panels unmount (the campaign panel only hides), so
+            // keep aria-controls on the active tab whose panel is guaranteed
+            // to exist in the DOM.
+            aria-controls={selected ? `play-panel-${tab.id}` : undefined}
             tabIndex={selected ? 0 : -1}
             onClick={() => onChange(tab.id)}
           >
