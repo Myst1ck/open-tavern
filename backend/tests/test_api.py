@@ -1135,6 +1135,26 @@ def test_send_action_system_prompt_uses_dm_style(storage):
     assert "speak like a sea dog" in system
 
 
+def test_send_action_kind_say_reaches_client_prompt(storage):
+    fake = FakeClient([json.dumps(_valid_sheet_raw()), "The barkeep nods."])
+    client = _make_client(storage, fake)
+    session_id = client.post("/sessions", json={"world_theme": "gothic"}).json()[
+        "session_id"
+    ]
+    client.post(f"/sessions/{session_id}/character", json={"description": "elf"})
+
+    resp = client.post(
+        f"/sessions/{session_id}/actions",
+        json={"action": "Evening, friend.", "kind": "say"},
+    )
+    assert resp.status_code == 200
+
+    last = fake.calls[1]["messages"][-1]
+    assert last["role"] == "user"
+    assert "says the following aloud, in character" in last["content"]
+    assert "Evening, friend." in last["content"]
+
+
 def test_mid_game_style_update_applies_to_next_turn(storage):
     fake = FakeClient(
         [

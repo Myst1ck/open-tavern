@@ -608,7 +608,13 @@ async def send_action(
 
             try:
                 result = turn(
-                    body.action, state, history, client, premise=premise, style=style
+                    body.action,
+                    state,
+                    history,
+                    client,
+                    premise=premise,
+                    style=style,
+                    kind=body.kind,
                 )
             except LLMClientError as exc:
                 raise HTTPException(status_code=502, detail=str(exc)) from exc
