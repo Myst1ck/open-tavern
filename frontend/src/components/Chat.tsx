@@ -44,11 +44,10 @@ export default function Chat({ messages, busy, error, onSend }: ChatProps) {
   const isContinue = mode === "continue";
 
   const selectMode = (next: ActionKind) => {
+    // Keep any typed text: switching to Continue disables the input but must
+    // not destroy what the user typed, so it round-trips back to say/act.
     setMode(next);
     window.localStorage.setItem(MODE_STORAGE_KEY, next);
-    if (next === "continue") {
-      setInput("");
-    }
   };
 
   const handleSubmit = (event: FormEvent) => {
@@ -96,6 +95,7 @@ export default function Chat({ messages, busy, error, onSend }: ChatProps) {
               type="button"
               className={value === mode ? "active" : undefined}
               aria-pressed={value === mode}
+              disabled={busy}
               onClick={() => selectMode(value)}
             >
               {MODE_LABELS[value]}
