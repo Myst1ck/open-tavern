@@ -38,7 +38,11 @@ export default function PlayTabs({ active, onChange }: PlayTabsProps) {
     event.preventDefault();
     const next = TABS[nextIndex];
     onChange(next.id);
-    document.getElementById(`play-tab-${next.id}`)?.focus();
+    const nextEl = document.getElementById(`play-tab-${next.id}`);
+    nextEl?.focus();
+    // Keep the focused tab visible when the bar overflows and scrolls
+    // horizontally, without shifting the page vertically.
+    nextEl?.scrollIntoView({ block: "nearest", inline: "nearest" });
   };
 
   return (

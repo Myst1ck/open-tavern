@@ -78,18 +78,20 @@ body {
 
 .play-tabs {
   display: flex;
+  flex-wrap: nowrap;
   gap: 0.25rem;
   padding: 0.25rem;
   margin-bottom: 1.25rem;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
+  overflow-x: auto;
 }
 
 .play-tab {
-  flex: 1;
+  flex: 1 0 auto;
   margin-top: 0;
-  min-height: 44px;
+  min-height: 36px;
   padding: 0.5rem 0.75rem;
   background: transparent;
   border: 1px solid transparent;
@@ -854,12 +856,6 @@ h3 {
   /* Equal padding so flex-basis floors match and the buttons split 50/50. */
   .send-button {
     padding: 0.65rem 0.8rem;
-  }
-
-  /* Two rows of two so every tab keeps a >=44px touch target. */
-  .play-tabs {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .chat-message {
