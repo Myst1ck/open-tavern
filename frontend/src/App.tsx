@@ -169,7 +169,9 @@ export default function App() {
 
   const handleItemAction = useCallback(
     async (action: string, item: Item) => {
-      if (!session || !character || itemBusy) return;
+      // ``busy`` too: an item mutation mid-turn would race the state snapshot
+      // the turn response is about to write.
+      if (!session || !character || busy || itemBusy) return;
       setItemBusy(true);
       try {
         const charId = session.session_id;
@@ -206,7 +208,7 @@ export default function App() {
         setItemBusy(false);
       }
     },
-    [session, character, itemBusy],
+    [session, character, busy, itemBusy],
   );
 
   const handleSaveSettings = (next: TavernSettings) => {
@@ -350,7 +352,9 @@ export default function App() {
   };
 
   const handleSendAction = async (action: string) => {
-    if (session === null || busy) {
+    // A turn sent while an item mutation is in flight would persist state
+    // computed before that mutation committed.
+    if (session === null || busy || itemBusy) {
       return;
     }
     setBusy(true);
