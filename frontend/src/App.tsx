@@ -280,8 +280,11 @@ export default function App() {
       // The backend already persists the AI opening as the first assistant
       // message; only fall back to a default line when no opening was saved.
       setMessages(persisted.length > 0 ? persisted : [fallback]);
-    } catch {
+    } catch (err) {
+      // The opening is persisted server-side; say so rather than silently
+      // showing a line the transcript does not contain.
       setMessages([fallback]);
+      setError(`Could not load the transcript: ${toMessage(err)}`);
     } finally {
       setBusy(false);
     }
