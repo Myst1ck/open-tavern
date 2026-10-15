@@ -109,9 +109,6 @@ export interface ChatMessage {
   content: string;
 }
 
-/** Alias for chat-message payloads sent to the backend. */
-export type Message = ChatMessage;
-
 export interface SessionDetail {
   meta: SessionSummary;
   state: GameState | null;
@@ -311,10 +308,6 @@ export function getSession(id: string): Promise<SessionDetail> {
   return request<SessionDetail>(`/sessions/${id}`);
 }
 
-export function getMessages(id: string): Promise<ChatMessage[]> {
-  return request<ChatMessage[]>(`/sessions/${id}/messages`);
-}
-
 export function renameSession(
   id: string,
   title: string,
@@ -481,57 +474,13 @@ export function generateWorld(
 
 // ── Item API types ──────────────────────────────────────────────
 
-export type ItemResponse = Item;
-
-export interface ItemListResponse {
-  items: Item[];
-}
-
 export interface ItemActionResponse {
   success: boolean;
   item: Item | null;
   message: string;
 }
 
-export interface CreateItemRequest {
-  name: string;
-  type?: BaseType;
-  stats?: Partial<ItemStats>;
-  tags?: string[];
-  description?: string;
-}
-
 // ── Item API functions ───────────────────────────────────────────
-
-export function createItem(
-  sessionId: string,
-  characterId: string,
-  data: CreateItemRequest,
-): Promise<ItemActionResponse> {
-  return request<ItemActionResponse>(
-    `/sessions/${sessionId}/characters/${characterId}/items`,
-    { method: "POST", body: JSON.stringify(data) },
-  );
-}
-
-export function listItems(
-  sessionId: string,
-  characterId: string,
-): Promise<ItemListResponse> {
-  return request<ItemListResponse>(
-    `/sessions/${sessionId}/characters/${characterId}/items`,
-  );
-}
-
-export function getItem(
-  sessionId: string,
-  characterId: string,
-  itemId: string,
-): Promise<ItemResponse> {
-  return request<ItemResponse>(
-    `/sessions/${sessionId}/characters/${characterId}/items/${itemId}`,
-  );
-}
 
 export function deleteItem(
   sessionId: string,
