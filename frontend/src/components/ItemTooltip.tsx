@@ -49,13 +49,15 @@ export default function ItemTooltip({
       x: window.innerWidth / 2,
       y: window.innerHeight / 2,
     };
-  const left = Math.min(
-    Math.max(point.x + OFFSET, MARGIN),
-    window.innerWidth - width - MARGIN,
+  // ``Math.max`` first so a tooltip wider than the viewport cannot win the
+  // lower clamp and be pushed off the left/top edge instead.
+  const left = Math.max(
+    MARGIN,
+    Math.min(point.x + OFFSET, window.innerWidth - width - MARGIN),
   );
-  const top = Math.min(
-    Math.max(point.y + OFFSET, MARGIN),
-    window.innerHeight - height - MARGIN,
+  const top = Math.max(
+    MARGIN,
+    Math.min(point.y + OFFSET, window.innerHeight - height - MARGIN),
   );
 
   return (
