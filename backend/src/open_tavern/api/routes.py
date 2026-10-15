@@ -149,10 +149,12 @@ router = APIRouter()
 #: In-memory LRU cache of live :class:`GameState` keyed by session id.
 #:
 #: Storage persists the running state via ``save_state``/``load_state``, so the
-#: cache only avoids re-reading it on every request. Capped at
-#: ``_STATE_CACHE_MAXLEN`` entries (oldest evicted) so long-running servers
-#: cannot grow it unbounded. Guarded by ``_STATE_LOCK`` so concurrent requests
-#: cannot race; all access must go through that lock.
+#: cache only avoids re-reading it on every request. Written through by the
+#: mutation paths under the per-session lock, never filled by reads (see
+#: :func:`_current_state`), so a read racing a write cannot poison it with a
+#: stale snapshot. Capped at ``_STATE_CACHE_MAXLEN`` entries (oldest evicted)
+#: so long-running servers cannot grow it unbounded. Guarded by ``_STATE_LOCK``
+#: so concurrent requests cannot race; all access must go through that lock.
 _STATE_CACHE_MAXLEN: int = 100
 _STATE_CACHE: OrderedDict[str, GameState] = OrderedDict()
 _STATE_LOCK = threading.Lock()
@@ -189,7 +191,8 @@ _read_limiter = RateLimiter(max_requests=120, window_seconds=60.0)
 
 #: Dedicated bounded executor for blocking LLM + storage work.
 #:
-#: LLM calls can block for up to the client timeout (120 s). Running them on
+#: LLM calls can block for up to the client timeout (60 s — see
+#: ``story.client.DEFAULT_TIMEOUT``). Running them on
 #: FastAPI's shared threadpool would let ~40 concurrent generations exhaust
 #: every worker and stall even cheap GETs (healthcheck). The async LLM
 #: handlers dispatch that work here instead; the semaphore below rejects
@@ -217,6 +220,7 @@ async def _run_llm_task[T](fn: Callable[[], T]) -> T:
         return await asyncio.get_running_loop().run_in_executor(_LLM_EXECUTOR, fn)
     finally:
         _LLM_EXECUTOR_SLOTS.release()
+
 
 #: Per-session locks serialize read-modify-write of a single session's state so
 #: concurrent actions cannot lose updates. Keyed by session id.
@@ -321,6 +325,9 @@ def _current_state(
 
     Prefer the in-memory cache; on a cache miss load the persisted state from
     storage, falling back to a fresh :func:`new_state` when nothing was saved.
+    The cache is written through only by the mutation paths (which hold the
+    per-session lock); reads never fill it, so a read racing a write cannot
+    poison the cache with a stale snapshot.
     """
     with _STATE_LOCK:
         cached = _STATE_CACHE.get(session_id)
@@ -330,7 +337,6 @@ def _current_state(
         return cached
     persisted = storage.load_state(session_id, character)
     if persisted is not None:
-        _cache_state(session_id, persisted)
         return persisted
     return new_state(character)
 
@@ -391,11 +397,14 @@ async def create_character(
     runs on the bounded executor, so the per-session lock is only ever
     waited on from an executor worker — never the shared threadpool.
     """
-    await asyncio.to_thread(_ensure_session, storage, session_id)
     _enforce_rate_limit(request, _character_limiter, "character")
+    await asyncio.to_thread(_ensure_session, storage, session_id)
 
     def _generate() -> CharacterResponse:
         with _session_lock_ctx(session_id):
+            # Re-check under the lock: a delete queued ahead of this generation
+            # would otherwise leave orphan character and message rows.
+            _ensure_session(storage, session_id)
             # Targeted single-column probe: the premise is the only session
             # field needed here, so skip the full character + transcript load
             # that ``load_session`` performs.
@@ -424,10 +433,10 @@ async def create_character(
             state = new_state(sheet)
             if scene:
                 state = replace(state, scene=scene)
-            storage.save_state(session_id, state)
+            # State + opening message commit as one transaction (same
+            # invariant as send_action's ``save_turn``).
+            storage.save_opening(session_id, state, opening or None)
             _cache_state(session_id, state)
-            if opening:
-                storage.append_message(session_id, "assistant", opening)
         return CharacterResponse(character=character_to_dict(sheet), opening=opening)
 
     return await _run_llm_task(_generate)
@@ -445,8 +454,8 @@ async def create_class_preview(
     client: ChatClient = Depends(get_per_request_client),
 ) -> ClassResponse:
     """Generate a class definition preview from a concept; nothing is persisted."""
-    await asyncio.to_thread(_ensure_session, storage, session_id)
     _enforce_rate_limit(request, _character_limiter, "class")
+    await asyncio.to_thread(_ensure_session, storage, session_id)
 
     def _preview():
         try:
@@ -525,8 +534,8 @@ async def refine_character(
     (``refine_prose`` returns ``None``) the original stored prose is returned
     verbatim — a silent fallback, never an error.
     """
-    await asyncio.to_thread(_ensure_session, storage, session_id)
     _enforce_rate_limit(request, _character_limiter, "refine")
+    await asyncio.to_thread(_ensure_session, storage, session_id)
     character = await asyncio.to_thread(_require_character, storage, session_id)
     context = replace(
         character,
@@ -575,8 +584,8 @@ async def send_action(
     runs on the bounded executor, so the per-session lock is only ever
     waited on from an executor worker — never the shared threadpool.
     """
-    await asyncio.to_thread(_ensure_session, storage, session_id)
     _enforce_rate_limit(request, _action_limiter, "action")
+    await asyncio.to_thread(_ensure_session, storage, session_id)
 
     def _run_turn():
         with _session_lock_ctx(session_id):
@@ -713,11 +722,13 @@ def create_item(
     storage: Storage = Depends(get_storage),
 ) -> ItemActionResponse:
     """Create a new item for a character and persist it."""
-    _ensure_session(storage, session_id)
-    _require_character_id(storage, session_id, character_id)
     _enforce_rate_limit(request, _item_limiter, "item")
 
     with _session_lock_ctx(session_id):
+        # Checked under the lock so a delete queued ahead of this mutation
+        # cannot orphan the row.
+        _ensure_session(storage, session_id)
+        _require_character_id(storage, session_id, character_id)
         try:
             item_type = BaseType(body.type) if body.type else BaseType.loot
         except ValueError as err:
@@ -797,11 +808,13 @@ def delete_item(
     storage: Storage = Depends(get_storage),
 ) -> ItemActionResponse:
     """Delete an item by id."""
-    _ensure_session(storage, session_id)
-    _require_character_id(storage, session_id, character_id)
     _enforce_rate_limit(request, _item_limiter, "item")
 
     with _session_lock_ctx(session_id):
+        # Checked under the lock so a delete queued ahead of this mutation
+        # cannot orphan the row.
+        _ensure_session(storage, session_id)
+        _require_character_id(storage, session_id, character_id)
         deleted = storage.delete_item(session_id, character_id, item_id)
 
     _invalidate_state(session_id)
@@ -822,11 +835,13 @@ def equip_item(
     storage: Storage = Depends(get_storage),
 ) -> ItemActionResponse:
     """Set item equipped=true."""
-    _ensure_session(storage, session_id)
-    _require_character_id(storage, session_id, character_id)
     _enforce_rate_limit(request, _item_limiter, "item")
 
     with _session_lock_ctx(session_id):
+        # Checked under the lock so a delete queued ahead of this mutation
+        # cannot orphan the row.
+        _ensure_session(storage, session_id)
+        _require_character_id(storage, session_id, character_id)
         item = storage.load_item(session_id, character_id, item_id)
         if item is None:
             return ItemActionResponse(success=False, message="item not found")
@@ -853,11 +868,13 @@ def unequip_item(
     storage: Storage = Depends(get_storage),
 ) -> ItemActionResponse:
     """Set item equipped=false."""
-    _ensure_session(storage, session_id)
-    _require_character_id(storage, session_id, character_id)
     _enforce_rate_limit(request, _item_limiter, "item")
 
     with _session_lock_ctx(session_id):
+        # Checked under the lock so a delete queued ahead of this mutation
+        # cannot orphan the row.
+        _ensure_session(storage, session_id)
+        _require_character_id(storage, session_id, character_id)
         item = storage.load_item(session_id, character_id, item_id)
         if item is None:
             return ItemActionResponse(success=False, message="item not found")
@@ -884,11 +901,13 @@ def use_item(
     storage: Storage = Depends(get_storage),
 ) -> ItemActionResponse:
     """Use a consumable item — decrement quantity or delete when depleted."""
-    _ensure_session(storage, session_id)
-    _require_character_id(storage, session_id, character_id)
     _enforce_rate_limit(request, _item_limiter, "item")
 
     with _session_lock_ctx(session_id):
+        # Checked under the lock so a delete queued ahead of this mutation
+        # cannot orphan the row.
+        _ensure_session(storage, session_id)
+        _require_character_id(storage, session_id, character_id)
         item = storage.load_item(session_id, character_id, item_id)
         if item is None:
             return ItemActionResponse(success=False, message="item not found")

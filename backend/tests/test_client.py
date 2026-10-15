@@ -8,6 +8,7 @@ malformed responses are exercised deterministically.
 from __future__ import annotations
 
 import json
+import socket
 
 import httpx
 import pytest
@@ -102,4 +103,23 @@ def test_chat_missing_content_raises_llm_client_error(monkeypatch):
     client = _client_with_transport(handler, monkeypatch)
 
     with pytest.raises(LLMClientError, match="LLM response missing content"):
+        client.chat([{"role": "user", "content": "hi"}])
+
+
+def test_chat_revalidates_host_and_refuses_newly_blocked_address(monkeypatch):
+    resolving = {"on": False}
+
+    def fake_getaddrinfo(host, *args, **kwargs):
+        if not resolving["on"]:
+            raise OSError(f"no DNS for {host}")
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("169.254.169.254", 0))]
+
+    monkeypatch.setattr(client_module.socket, "getaddrinfo", fake_getaddrinfo)
+    # Construction allows the unresolvable host...
+    client = OpenAIClient(api_key="test-key", base_url="http://llm.example/v1")
+    # ...but the send-time re-check must refuse it once it resolves to a
+    # blocked address (late DNS resolution / rebinding).
+    resolving["on"] = True
+
+    with pytest.raises(LLMClientError, match="not allowed"):
         client.chat([{"role": "user", "content": "hi"}])

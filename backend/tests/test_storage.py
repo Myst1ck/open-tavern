@@ -171,7 +171,9 @@ def test_migration_applies_steps_in_order(tmp_path):
     try:
         tables = {
             row["name"]
-            for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
         }
         cols = {row["name"] for row in conn.execute("PRAGMA table_info(sessions)")}
         rows = [tuple(r) for r in conn.execute("SELECT id, world_theme FROM sessions")]
@@ -412,6 +414,30 @@ def test_save_state_touches_updated_at(storage):
 
     # Saving state bumps ``first`` ahead of ``second`` in updated_at order.
     assert storage.list_sessions()[0]["id"] == first
+
+
+def test_save_opening_writes_state_and_message(storage):
+    session_id = storage.create_session("gothic")
+    sheet = _make_character()
+    state = new_state(sheet)
+
+    storage.save_opening(session_id, state, "Welcome to the crypt.")
+
+    assert storage.load_state(session_id, sheet) == state
+    assert storage.load_messages(session_id) == [
+        {"role": "assistant", "content": "Welcome to the crypt."}
+    ]
+
+
+def test_save_opening_without_message_writes_state_only(storage):
+    session_id = storage.create_session("gothic")
+    sheet = _make_character()
+    state = new_state(sheet)
+
+    storage.save_opening(session_id, state, None)
+
+    assert storage.load_state(session_id, sheet) == state
+    assert storage.load_messages(session_id) == []
 
 
 # --- list_sessions --------------------------------------------------------
