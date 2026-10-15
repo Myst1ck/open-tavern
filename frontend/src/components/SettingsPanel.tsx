@@ -1,6 +1,6 @@
 import { type FormEvent, useState } from "react";
 
-import { type TavernSettings } from "../api";
+import { type TavernSettings } from "../api/settings";
 
 interface SettingsPanelProps {
   initial: TavernSettings;

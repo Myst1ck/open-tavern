@@ -1,6 +1,6 @@
 import { type FormEvent, useState } from "react";
 
-import { generateWorld } from "../api";
+import { generateWorld } from "../api/world";
 
 export interface WorldGenViewProps {
   onAccept: (theme: string, premise: string) => Promise<void> | void;
@@ -21,10 +21,7 @@ function toMessage(err: unknown): string {
  * surprised); the backend returns a theme + premise, which the player may
  * regenerate or accept. No session exists until "Accept" is clicked.
  */
-export default function WorldGenView({
-  onAccept,
-  onBack,
-}: WorldGenViewProps) {
+export default function WorldGenView({ onAccept, onBack }: WorldGenViewProps) {
   const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -117,7 +114,11 @@ export default function WorldGenView({
           <h3>{preview.theme}</h3>
           <p className="muted">{preview.premise}</p>
           <div className="refine-actions">
-            <button type="button" onClick={() => void handleAccept()} disabled={busy}>
+            <button
+              type="button"
+              onClick={() => void handleAccept()}
+              disabled={busy}
+            >
               Accept
             </button>
             <button

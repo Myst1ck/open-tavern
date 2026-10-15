@@ -1,4 +1,4 @@
-import type { BaseType, Item } from "../api";
+import type { BaseType, Item } from "../api/types";
 
 const TYPE_EMOJI: Record<BaseType, string> = {
   weapon: "🗡️",

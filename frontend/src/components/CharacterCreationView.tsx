@@ -1,14 +1,16 @@
 import { type FormEvent, useEffect, useState } from "react";
 
 import {
-  type CharacterCreationPayload,
-  type CharacterSheet,
-  type ClassDefinition,
   createCharacter,
   generateClass,
   refineCharacter,
-  type RefineResponse,
-} from "../api";
+} from "../api/character";
+import type {
+  CharacterCreationPayload,
+  CharacterSheet,
+  ClassDefinition,
+  RefineResponse,
+} from "../api/types";
 import {
   clearCharDraft,
   loadCharDraft,
@@ -178,8 +180,10 @@ export default function CharacterCreationView({
     // Restore each step from the draft, skipping stale or empty values.
     const next: Record<StepKey, string> = { ...values };
     for (const item of STEPS) {
+      // The persisted draft only holds the steps that were actually edited, so
+      // most keys are absent here — reading one unguarded crashed this handler.
       const value = draft[item.key];
-      if (value.trim() !== "") {
+      if (typeof value === "string" && value.trim() !== "") {
         next[item.key] = value;
       }
     }

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 
-import type { Item } from "../api";
+import type { Item } from "../api/types";
 
 interface ItemModalProps {
   item: Item;

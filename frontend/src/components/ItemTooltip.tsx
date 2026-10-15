@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import type { Item } from "../api";
+import type { Item } from "../api/types";
 
 interface ItemTooltipProps {
   item: Item;

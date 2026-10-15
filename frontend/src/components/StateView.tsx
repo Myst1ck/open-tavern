@@ -1,4 +1,4 @@
-import type { GameState } from "../api";
+import type { GameState } from "../api/types";
 
 interface StateViewProps {
   state: GameState | null;

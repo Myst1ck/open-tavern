@@ -181,7 +181,7 @@ podman cp $(podman-compose ps -q backend):/data/open_tavern.db ./open_tavern.db
 
 - `docker compose up --build` (or `podman-compose up --build`) builds and starts both containers.
 - Backend container binds `0.0.0.0` internally (compose sets `OPEN_TAVERN_BIND_HOST=0.0.0.0` so the frontend container reaches it over the docker network); the host port must bind loopback (`127.0.0.1:8000:8000` in `docker-compose.yml`) so the API is never exposed off-host. The frontend container proxies `/sessions` + `/world` to the backend over the docker network. ⚠️ `docker-compose.yml` currently maps `OPEN_TAVERN_BIND_IP` (default Tailscale IP) — change it to `127.0.0.1` to match this topology.
-- **No auth.** The frontend sends no `Authorization` header. The Settings panel `X-API-Key` field is an OpenAI-key override for LLM calls, not auth. Tailnet is the trust boundary — tailnet devices reach the frontend only.
+- **No auth.** The frontend sends no `Authorization` header. The Settings panel `X-API-Key` field is an OpenAI-key override for LLM calls, not auth. Tailnet is the trust boundary — tailnet devices reach the frontend only. The Base URL field is BYO-key only: a request carrying `X-Base-Url` without its own `X-API-Key` is rejected with 400, so the server's `OPENAI_API_KEY` is never sent to a caller-chosen host.
 - Runs as non-root user `appuser` (uid 10001); SQLite volume `backend-data` mounted at `/data` with `:Z` (SELinux).
 - `restart: unless-stopped` on both services.
 - Frontend `depends_on: backend: condition: service_healthy` — waits for backend health before starting.

@@ -1,6 +1,6 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
 
-import type { RollOutcome } from "../api";
+import type { RollOutcome } from "../api/types";
 
 export interface Message {
   id: string;

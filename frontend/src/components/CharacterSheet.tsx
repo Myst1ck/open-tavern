@@ -1,4 +1,9 @@
-import type { AbilityScores, CharacterSheet, Goal, GoalStatus } from "../api";
+import type {
+  AbilityScores,
+  CharacterSheet,
+  Goal,
+  GoalStatus,
+} from "../api/types";
 
 const ABILITY_LABELS: Array<{ short: string; key: keyof AbilityScores }> = [
   { short: "STR", key: "strength" },

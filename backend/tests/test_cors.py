@@ -12,7 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from open_tavern.api.main import _allowed_origins, create_app
-from open_tavern.api.routes import get_storage
+from open_tavern.api.runtime import get_storage
 from open_tavern.storage import Storage
 
 
