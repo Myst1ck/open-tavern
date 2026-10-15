@@ -419,10 +419,9 @@ export default function CharacterCreationView({
                 disabled={busy}
               />
             )}
-            {values[step.key].trim() === "" &&
-              draft[step.key]?.trim() !== "" && (
-                <span className="char-last-hint">last: {draft[step.key]}</span>
-              )}
+            {values[step.key].trim() === "" && draft[step.key]?.trim() && (
+              <span className="char-last-hint">last: {draft[step.key]}</span>
+            )}
             {step.key === "class_concept" && (
               <>
                 <button

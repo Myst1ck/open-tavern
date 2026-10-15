@@ -74,16 +74,25 @@ interface InventoryPanelProps {
  * subtree, not the whole play view (Chat, StateView, ...).
  */
 function InventoryPanel({ items, onItemClick }: InventoryPanelProps) {
-  const [hoveredItem, setHoveredItem] = useState<Item | null>(null);
+  const [hovered, setHovered] = useState<{
+    item: Item;
+    point?: { x: number; y: number };
+  } | null>(null);
   return (
     <>
       <InventoryGrid
         items={items}
         onItemClick={onItemClick}
-        onItemHover={setHoveredItem}
+        onItemHover={(item, point) =>
+          setHovered(item !== null ? { item, point } : null)
+        }
       />
-      {hoveredItem !== null && (
-        <ItemTooltip item={hoveredItem} visible={true} />
+      {hovered !== null && (
+        <ItemTooltip
+          item={hovered.item}
+          visible={true}
+          position={hovered.point}
+        />
       )}
     </>
   );
@@ -187,6 +196,9 @@ export default function App() {
           setCharacter(fresh.state.character);
           // Close only on success; a failed action keeps the modal open.
           setSelectedItem(null);
+        } else {
+          // A 200 with success: false still carries a reason; surface it.
+          setError(res.message !== "" ? res.message : "Item action failed");
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Item action failed");
@@ -244,6 +256,9 @@ export default function App() {
     if (session === null) {
       return;
     }
+    // Hold the busy flag across the load so a player turn cannot be sent (and
+    // then wiped by the persisted transcript) while it is still arriving.
+    setBusy(true);
     setCharacter(character);
     setPhase("play");
     const fallback: Message = {
@@ -265,6 +280,8 @@ export default function App() {
       setMessages(persisted.length > 0 ? persisted : [fallback]);
     } catch {
       setMessages([fallback]);
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -294,7 +311,8 @@ export default function App() {
         rolls: [],
       }));
       setMessages(persisted);
-      setPhase("play");
+      // A session without a character has no play view to land in.
+      setPhase(character !== null ? "play" : "character");
     } catch (err) {
       setError(toMessage(err));
     } finally {
@@ -412,6 +430,7 @@ export default function App() {
               type="button"
               className="back-button"
               onClick={handleBackToHome}
+              disabled={busy}
             >
               ← Back to tales
             </button>
@@ -445,6 +464,7 @@ export default function App() {
             {selectedItem !== null && (
               <ItemModal
                 item={selectedItem}
+                busy={itemBusy}
                 onClose={() => setSelectedItem(null)}
                 onEquip={(item) => handleItemAction("equip", item)}
                 onUnequip={(item) => handleItemAction("unequip", item)}

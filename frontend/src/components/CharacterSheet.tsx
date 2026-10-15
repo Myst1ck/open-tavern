@@ -116,22 +116,28 @@ export default function CharacterSheetView({ character }: CharacterSheetProps) {
       <h3>Skills</h3>
       <ul className="skill-list">
         {Object.entries(character.skills).map(([skill, proficient]) => {
-          const abilityKey = SKILL_ABILITIES[skill] ?? "strength";
+          const abilityKey: keyof AbilityScores | undefined =
+            SKILL_ABILITIES[skill];
+          // Unknown skill names have no ability mapping, so show no modifier
+          // rather than borrowing the STR modifier.
           const total =
-            abilityModifier(safeScore(character.abilities[abilityKey])) +
-            (proficient ? character.proficiency_bonus : 0);
+            abilityKey !== undefined
+              ? abilityModifier(safeScore(character.abilities[abilityKey])) +
+                (proficient ? character.proficiency_bonus : 0)
+              : null;
           return (
             <li key={skill}>
               <span className="skill-name">{skill}</span>
               <span className={proficient ? "skill-tag trained" : "skill-tag"}>
                 {proficient ? "trained" : "untrained"}
               </span>
-              <span className="skill-mod">{formatModifier(total)}</span>
+              <span className="skill-mod">
+                {total !== null ? formatModifier(total) : "—"}
+              </span>
             </li>
           );
         })}
       </ul>
-      <InventoryList items={character.inventory} />
       <ItemList title="Conditions" items={character.conditions} />
       <GoalList title="Goals" items={character.goals} />
       <GoalList title="Quests" items={character.quests} />

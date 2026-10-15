@@ -261,6 +261,16 @@ async function request<T>(
       return undefined as T;
     }
     return (await response.json()) as T;
+  } catch (err) {
+    // The timer aborts the fetch; surface a readable message instead of the
+    // raw DOMException text ("signal is aborted without reason").
+    if (controller.signal.aborted) {
+      throw new ApiError(
+        0,
+        "Request timed out — the storyteller took too long. Try again.",
+      );
+    }
+    throw err;
   } finally {
     clearTimeout(timer);
   }
