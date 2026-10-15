@@ -1,10 +1,4 @@
-import type {
-  AbilityScores,
-  CharacterSheet,
-  Goal,
-  GoalStatus,
-  Item,
-} from "../api";
+import type { AbilityScores, CharacterSheet, Goal, GoalStatus } from "../api";
 
 const ABILITY_LABELS: Array<{ short: string; key: keyof AbilityScores }> = [
   { short: "STR", key: "strength" },
@@ -142,28 +136,6 @@ export default function CharacterSheetView({ character }: CharacterSheetProps) {
       <GoalList title="Goals" items={character.goals} />
       <GoalList title="Quests" items={character.quests} />
     </section>
-  );
-}
-
-function InventoryList({ items }: { items: Item[] }) {
-  return (
-    <>
-      <h3>Inventory</h3>
-      {items.length === 0 ? (
-        <p className="muted">None</p>
-      ) : (
-        <ul className="chip-list">
-          {items.map((item) => (
-            <li key={item.id} className="chip">
-              {item.name}
-              {item.equipped ? (
-                <span className="equipped-badge"> (equipped)</span>
-              ) : null}
-            </li>
-          ))}
-        </ul>
-      )}
-    </>
   );
 }
 
