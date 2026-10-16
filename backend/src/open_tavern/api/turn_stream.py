@@ -128,8 +128,11 @@ async def prepare_action(
     """
     routes = _routes()
     await asyncio.to_thread(routes._ensure_session, storage, session_id)
-    await asyncio.to_thread(routes._require_character, storage, session_id)
+    # The limiter records every hit, so it runs before the character check:
+    # requests rejected with 409 must still consume the window, or a flood
+    # of them is unthrottled.
     routes._enforce_rate_limit(request, limiter, "action")
+    await asyncio.to_thread(routes._require_character, storage, session_id)
     if not routes._LLM_EXECUTOR_SLOTS.acquire(blocking=False):
         raise HTTPException(status_code=503, detail="server busy, try again shortly")
     return PreparedAction(

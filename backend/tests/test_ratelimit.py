@@ -129,3 +129,24 @@ def test_action_rate_limit_is_plain_http_before_stream_opens(storage):
     assert resp.json()["detail"] == "rate limit exceeded"
     # Rejected before the response exists: no SSE frames in the body.
     assert "event:" not in resp.text
+
+
+def test_action_409_rejections_still_consume_the_rate_window(storage):
+    """Requests rejected without a character are counted by the limiter."""
+    client = _client(storage, _NarratingClient())
+    session_id = storage.create_session("gothic")  # no character -> 409
+
+    # Each 409 is a recorded hit: the limit of 10 fills up, and the 11th
+    # request is throttled before validation instead of passing for free.
+    for _ in range(10):
+        resp = client.post(
+            f"/sessions/{session_id}/actions", json={"action": "look around"}
+        )
+        assert resp.status_code == 409
+
+    resp = client.post(
+        f"/sessions/{session_id}/actions", json={"action": "look around"}
+    )
+
+    assert resp.status_code == 429
+    assert resp.json()["detail"] == "rate limit exceeded"
