@@ -70,10 +70,11 @@ async def create_character(
             # Re-check under the lock: a delete queued ahead of this generation
             # would otherwise leave orphan character and message rows.
             guards.ensure_session(storage, session_id)
-            # Targeted single-column probe: the premise is the only session
-            # field needed here, so skip the full character + transcript load
-            # that ``load_session`` performs.
+            # Targeted single-column probes: premise and narration style are
+            # the only session fields needed here, so skip the full character
+            # + transcript load that ``load_session`` performs.
             premise = storage.session_premise(session_id)
+            style = storage.session_dm_style(session_id)
             try:
                 sheet, opening, scene = generate_character(
                     body.description or "",
@@ -89,6 +90,7 @@ async def create_character(
                     class_hit_die=body.class_hit_die,
                     class_description=body.class_description or "",
                     premise=premise,
+                    style=style,
                 )
             except CharacterGenerationError as exc:
                 # Our own validator text — no upstream URL or body — and the

@@ -29,6 +29,7 @@ from open_tavern.state import GameState, new_state
 from open_tavern.storage import Storage
 from open_tavern.story import OpenAIClient
 from open_tavern.story.client import LLMClientError
+from open_tavern.story.style import TONES, VERBOSITIES
 
 
 class FakeClient:
@@ -428,6 +429,54 @@ def test_get_per_request_client_empty_base_url_falls_back_to_env(monkeypatch):
     assert isinstance(client, OpenAIClient)
     # Empty X-Base-Url is dropped: env base URL applies.
     assert client.base_url == "http://env:8000/v1"
+
+
+def test_get_per_request_client_header_key_works_without_env(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+
+    client = get_per_request_client(
+        x_api_key="sk-from-settings",
+        x_model=None,
+        x_base_url=None,
+    )
+
+    assert isinstance(client, OpenAIClient)
+    assert client.api_key == "sk-from-settings"
+
+
+def test_get_per_request_client_keyless_local_base_url_allowed(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+
+    client = get_per_request_client(
+        x_api_key=None,
+        x_model=None,
+        x_base_url="http://localhost:11434/v1",
+    )
+
+    assert isinstance(client, OpenAIClient)
+    assert client.api_key == ""
+
+
+def test_get_per_request_client_missing_key_points_to_settings(monkeypatch):
+    # A keyless non-local client is reachable only through the environment
+    # client: an X-Base-Url header without X-API-Key is rejected with 400 by the
+    # base-URL/key pairing rule (see test_base_url_header_without_api_key_rejected)
+    # before the keyless check below could run.
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+
+    with pytest.raises(HTTPException) as excinfo:
+        get_per_request_client(
+            x_api_key=None,
+            x_model=None,
+            x_base_url=None,
+            env_client=OpenAIClient(),
+        )
+
+    assert excinfo.value.status_code == 503
+    assert "Settings" in excinfo.value.detail
 
 
 def test_build_client_from_headers_invalid_base_url_raises_400(monkeypatch):
@@ -1061,3 +1110,170 @@ def test_world_generate_rate_limited(storage, monkeypatch):
 
     resp = client.post("/world/generate", json={"description": "spooky"})
     assert resp.status_code == 429
+
+
+# --- dm style ---
+
+
+def test_create_session_echoes_normalized_dm_style(storage):
+    client = _make_client(storage, FakeClient([]))
+
+    resp = client.post(
+        "/sessions",
+        json={
+            "world_theme": "gothic",
+            "dm_style": {"tone": "gritty", "custom_tone": "speak like a sea dog"},
+        },
+    )
+    assert resp.status_code == 201
+    assert resp.json()["dm_style"] == {
+        "tone": "gritty",
+        "verbosity": "standard",
+        "custom_tone": "speak like a sea dog",
+    }
+
+
+def test_create_session_without_dm_style_echoes_none(storage):
+    client = _make_client(storage, FakeClient([]))
+
+    resp = client.post("/sessions", json={"world_theme": "gothic"})
+    assert resp.status_code == 201
+    assert resp.json()["dm_style"] is None
+
+
+def test_create_session_rejects_unknown_tone_or_verbosity(storage):
+    client = _make_client(storage, FakeClient([]))
+
+    for body in ({"tone": "purple"}, {"verbosity": "purple"}):
+        resp = client.post(
+            "/sessions", json={"world_theme": "gothic", "dm_style": body}
+        )
+        assert resp.status_code == 422
+
+
+def test_update_session_style_roundtrip(storage):
+    session_id = storage.create_session("gothic")
+    client = _make_client(storage, FakeClient([]))
+
+    resp = client.put(
+        f"/sessions/{session_id}/style",
+        json={"tone": "heroic", "verbosity": "rich", "custom_tone": "sing"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "tone": "heroic",
+        "verbosity": "rich",
+        "custom_tone": "sing",
+    }
+
+    detail = client.get(f"/sessions/{session_id}").json()
+    assert detail["dm_style"] == resp.json()
+
+
+def test_update_session_style_unknown_session_404(storage):
+    client = _make_client(storage, FakeClient([]))
+
+    resp = client.put("/sessions/nope/style", json={"tone": "gritty"})
+    assert resp.status_code == 404
+
+
+def test_create_character_prompt_includes_opening_style(storage):
+    fake = FakeClient([json.dumps(_valid_sheet_raw())])
+    client = _make_client(storage, fake)
+    session_id = client.post(
+        "/sessions",
+        json={
+            "world_theme": "gothic",
+            "dm_style": {
+                "tone": "gritty",
+                "verbosity": "concise",
+                "custom_tone": "speak like a sea dog",
+            },
+        },
+    ).json()["session_id"]
+
+    resp = client.post(f"/sessions/{session_id}/character", json={"description": "elf"})
+    assert resp.status_code == 200
+
+    prompt = fake.calls[0]["messages"][0]["content"]
+    assert "OPENING NARRATION STYLE:" in prompt
+    assert TONES["gritty"] in prompt
+    assert VERBOSITIES["concise"] in prompt
+    assert "speak like a sea dog" in prompt
+
+
+def test_send_action_system_prompt_uses_dm_style(storage):
+    fake = FakeClient([json.dumps(_valid_sheet_raw()), "You settle in for the night."])
+    client = _make_client(storage, fake)
+    session_id = client.post(
+        "/sessions",
+        json={
+            "world_theme": "gothic",
+            "dm_style": {
+                "tone": "gritty",
+                "verbosity": "concise",
+                "custom_tone": "speak like a sea dog",
+            },
+        },
+    ).json()["session_id"]
+    client.post(f"/sessions/{session_id}/character", json={"description": "elf"})
+
+    resp = client.post(
+        f"/sessions/{session_id}/actions", json={"action": "I look around"}
+    )
+    assert resp.status_code == 200
+
+    system = fake.calls[1]["messages"][0]["content"]
+    assert "NARRATION STYLE:" in system
+    assert TONES["gritty"] in system
+    assert VERBOSITIES["concise"] in system
+    assert "speak like a sea dog" in system
+
+
+def test_send_action_kind_say_reaches_client_prompt(storage):
+    fake = FakeClient([json.dumps(_valid_sheet_raw()), "The barkeep nods."])
+    client = _make_client(storage, fake)
+    session_id = client.post("/sessions", json={"world_theme": "gothic"}).json()[
+        "session_id"
+    ]
+    client.post(f"/sessions/{session_id}/character", json={"description": "elf"})
+
+    resp = client.post(
+        f"/sessions/{session_id}/actions",
+        json={"action": "Evening, friend.", "kind": "say"},
+    )
+    assert resp.status_code == 200
+
+    last = fake.calls[1]["messages"][-1]
+    assert last["role"] == "user"
+    assert "says the following aloud, in character" in last["content"]
+    assert "Evening, friend." in last["content"]
+
+
+def test_mid_game_style_update_applies_to_next_turn(storage):
+    fake = FakeClient(
+        [
+            json.dumps(_valid_sheet_raw()),
+            "You settle in for the night.",
+            "The crowd laughs.",
+        ]
+    )
+    client = _make_client(storage, fake)
+    session_id = client.post("/sessions", json={"world_theme": "gothic"}).json()[
+        "session_id"
+    ]
+    client.post(f"/sessions/{session_id}/character", json={"description": "elf"})
+
+    resp = client.post(
+        f"/sessions/{session_id}/actions", json={"action": "I look around"}
+    )
+    assert resp.status_code == 200
+    assert "NARRATION STYLE:" not in fake.calls[1]["messages"][0]["content"]
+
+    resp = client.put(f"/sessions/{session_id}/style", json={"tone": "comedic"})
+    assert resp.status_code == 200
+
+    resp = client.post(f"/sessions/{session_id}/actions", json={"action": "I laugh"})
+    assert resp.status_code == 200
+    system = fake.calls[2]["messages"][0]["content"]
+    assert TONES["comedic"] in system

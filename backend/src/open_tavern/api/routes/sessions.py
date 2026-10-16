@@ -14,11 +14,13 @@ from open_tavern.api.runtime import (
 from open_tavern.api.schemas import (
     CreateSessionRequest,
     CreateSessionResponse,
+    DmStyleRequest,
     RenameSessionRequest,
     SessionDetail,
     SessionSummary,
     StateResponse,
     character_to_dict,
+    dm_style_to_dict,
     state_to_dict,
 )
 from open_tavern.storage import Storage
@@ -50,13 +52,15 @@ def create_session(
 ) -> CreateSessionResponse:
     """Create a new game session and persist it."""
     guards.enforce_rate_limit(request, guards.create_limiter, "create")
+    style = body.dm_style.to_style() if body.dm_style is not None else None
     session_id = storage.create_session(
-        body.world_theme, body.title, premise=body.premise
+        body.world_theme, body.title, premise=body.premise, dm_style=style
     )
     return CreateSessionResponse(
         session_id=session_id,
         world_theme=body.world_theme,
         premise=body.premise,
+        dm_style=dm_style_to_dict(style),
     )
 
 
@@ -96,15 +100,23 @@ def get_session(
     """Return a full resume bundle for ``session_id`` (404 if unknown)."""
     guards.enforce_rate_limit(request, guards.read_limiter, "read")
     meta = _session_summary(storage, session_id)
+    style = storage.session_dm_style(session_id)
     character = storage.load_character(session_id)
     if character is None:
-        return SessionDetail(meta=meta, state={}, character={}, messages=[])
+        return SessionDetail(
+            meta=meta,
+            state={},
+            character={},
+            messages=[],
+            dm_style=dm_style_to_dict(style),
+        )
     state = current_state(storage, session_id, character)
     return SessionDetail(
         meta=meta,
         state=state_to_dict(state),
         character=character_to_dict(character),
         messages=storage.load_messages(session_id),
+        dm_style=dm_style_to_dict(style),
     )
 
 
@@ -132,6 +144,25 @@ def rename_session(
     if not storage.rename_session(session_id, body.title):
         raise HTTPException(status_code=404, detail="session not found")
     return _session_summary(storage, session_id)
+
+
+@router.put("/sessions/{session_id}/style", response_model=dict)
+def update_session_style(
+    session_id: str,
+    body: DmStyleRequest,
+    request: Request,
+    storage: Storage = Depends(get_storage),
+) -> dict:
+    """Set the DM narration style for ``session_id`` and echo the value.
+
+    Unknown ``tone``/``verbosity`` keys are rejected with 422 by the schema;
+    unknown sessions return 404.
+    """
+    guards.enforce_rate_limit(request, guards.delete_limiter, "style")
+    style = body.to_style()
+    if not storage.update_dm_style(session_id, style):
+        raise HTTPException(status_code=404, detail="session not found")
+    return dm_style_to_dict(style)
 
 
 @router.delete("/sessions/{session_id}", status_code=204)

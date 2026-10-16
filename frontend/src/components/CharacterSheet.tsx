@@ -1,3 +1,5 @@
+import ReactMarkdown from "react-markdown";
+
 import type {
   AbilityScores,
   CharacterSheet,
@@ -72,23 +74,31 @@ export default function CharacterSheetView({ character }: CharacterSheetProps) {
       {personality !== "" && (
         <div className="sheet-persona-block">
           <h3>Personality</h3>
-          <p className="sheet-persona">{personality}</p>
+          <div className="prose sheet-persona">
+            <ReactMarkdown>{personality}</ReactMarkdown>
+          </div>
         </div>
       )}
       {appearance !== "" && (
         <div className="sheet-persona-block">
           <h3>Appearance</h3>
-          <p className="sheet-persona">{appearance}</p>
+          <div className="prose sheet-persona">
+            <ReactMarkdown>{appearance}</ReactMarkdown>
+          </div>
         </div>
       )}
       {motivation !== "" && (
         <div className="sheet-persona-block">
           <h3>Motivation</h3>
-          <p className="sheet-persona">{motivation}</p>
+          <div className="prose sheet-persona">
+            <ReactMarkdown>{motivation}</ReactMarkdown>
+          </div>
         </div>
       )}
       {!hasPersona && backstory !== "" && (
-        <p className="sheet-backstory">{backstory}</p>
+        <div className="prose sheet-backstory">
+          <ReactMarkdown>{backstory}</ReactMarkdown>
+        </div>
       )}
       <div className="sheet-stats">
         <span>

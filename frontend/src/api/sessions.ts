@@ -1,5 +1,6 @@
 import { request } from "./http";
 import type {
+  DmStyle,
   Session,
   SessionDetail,
   SessionSummary,
@@ -10,6 +11,7 @@ export function createSession(
   worldTheme: string,
   title?: string,
   premise?: string,
+  dmStyle?: DmStyle,
 ): Promise<Session> {
   return request<Session>("/sessions", {
     method: "POST",
@@ -17,6 +19,7 @@ export function createSession(
       world_theme: worldTheme,
       ...(title !== undefined ? { title } : {}),
       ...(premise !== undefined ? { premise } : {}),
+      ...(dmStyle !== undefined ? { dm_style: dmStyle } : {}),
     }),
   });
 }
@@ -41,6 +44,20 @@ export function renameSession(
 
 export function deleteSession(id: string): Promise<void> {
   return request<void>(`/sessions/${id}`, { method: "DELETE" });
+}
+
+/**
+ * Replace the session's DM narration style mid-game. The backend validates
+ * preset keys (422 on unknown) and echoes the normalized style.
+ */
+export function updateSessionStyle(
+  sessionId: string,
+  style: DmStyle,
+): Promise<DmStyle> {
+  return request<DmStyle>(`/sessions/${sessionId}/style`, {
+    method: "PUT",
+    body: JSON.stringify(style),
+  });
 }
 
 export function getState(sessionId: string): Promise<StateResponse> {

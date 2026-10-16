@@ -14,6 +14,7 @@ from typing import Protocol
 from fastapi import Depends, Header, HTTPException
 
 from open_tavern.story import OpenAIClient
+from open_tavern.story.client import is_local_base_url
 
 logger = logging.getLogger(__name__)
 
@@ -46,11 +47,13 @@ def build_client_from_headers(
     :class:`OpenAIClient`; empty/absent values are dropped so the constructor's
     env-based defaults apply. A base URL CAN come from headers (``X-Base-Url``),
     but only together with a matching ``X-API-Key``: pairing a caller-chosen host
-    with the environment's key would send this server's key to that host. When
-    the base URL is absent/empty it falls back to ``OPENAI_BASE_URL`` (or the
-    constructor default). Always returns a fresh, network-free client.
+    with the environment's key would send this server's key to that host. The one
+    exception is a loopback/private base URL, where a keyless client is the
+    intended local-model setup (Ollama, LM Studio, llama.cpp). When the base URL
+    is absent/empty it falls back to ``OPENAI_BASE_URL`` (or the constructor
+    default). Always returns a fresh, network-free client.
     """
-    if base_url and not api_key:
+    if base_url and not api_key and not is_local_base_url(base_url):
         raise HTTPException(
             status_code=400,
             detail="X-Base-Url requires X-API-Key",
@@ -81,18 +84,27 @@ def get_per_request_client(
     back to ``OPENAI_BASE_URL``. Without any recognized header the shared
     environment client (or its dependency-override test fake) is used unchanged.
 
-    Raises ``HTTPException`` 503 when the resolved client is a real
-    :class:`OpenAIClient` with no API key — the app starts without a key, so
-    only OpenAI-dependent requests fail until one is configured.
+    The API key is optional: the Settings menu is the intended source, and the
+    ``OPENAI_API_KEY`` env var is only a fallback. A real :class:`OpenAIClient`
+    with no key is allowed through when its base URL is loopback/private (a
+    keyless local model such as Ollama); otherwise the request fails 503 with a
+    message pointing at the Settings menu rather than the env var.
     """
     if not (x_api_key or x_model or x_base_url):
         client: ChatClient = env_client
     else:
         client = build_client_from_headers(x_api_key, x_model, x_base_url)
-    if isinstance(client, OpenAIClient) and not client.api_key.strip():
+    if (
+        isinstance(client, OpenAIClient)
+        and not client.api_key.strip()
+        and not is_local_base_url(client.base_url)
+    ):
         raise HTTPException(
             status_code=503,
-            detail="OPENAI_API_KEY not configured",
+            detail=(
+                "No API key configured. Add one in the Settings menu "
+                "(⚙ Settings), or set a local Base URL for a keyless model."
+            ),
         )
     return client
 

@@ -23,7 +23,7 @@ character_limiter = RateLimiter(max_requests=5, window_seconds=60.0)
 create_limiter = RateLimiter(max_requests=30, window_seconds=60.0)
 #: Limits for the stateless world-generation endpoint (paid LLM call).
 world_limiter = RateLimiter(max_requests=30, window_seconds=60.0)
-#: Limits for session mutations (delete/rename) — cheap but unbounded writes.
+#: Limits for session mutations (delete/rename/style) — cheap but unbounded writes.
 delete_limiter = RateLimiter(max_requests=10, window_seconds=60.0)
 #: Limits for item CRUD operations.
 item_limiter = RateLimiter(max_requests=30, window_seconds=60.0)

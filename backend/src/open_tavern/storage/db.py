@@ -19,6 +19,7 @@ from uuid import uuid4
 from open_tavern.character import CharacterSheet, normalize
 from open_tavern.character.items import BaseType, Item
 from open_tavern.state import GameState, state_from_persistable, state_to_persistable
+from open_tavern.story.style import DmStyle, normalize_dm_style
 
 #: Current schema version, tracked in the ``meta`` table.
 #:
@@ -29,10 +30,11 @@ from open_tavern.state import GameState, state_from_persistable, state_to_persis
 #:   * 3 — adds the ``items`` table.
 #:   * 4 — adds session metadata columns (``premise``, ``title``,
 #:     ``updated_at``, ``state_json``).
+#:   * 5 — adds the ``dm_style_json`` session column (DM narration style).
 #:
 #: Older databases are migrated forward step by step (see ``_MIGRATIONS``);
 #: databases from a newer build are refused, never dropped.
-SCHEMA_VERSION: int = 4
+SCHEMA_VERSION: int = 5
 
 
 class SchemaTooNewError(RuntimeError):
@@ -51,7 +53,6 @@ class SchemaCorruptError(RuntimeError):
     error), and rebuilding the schema would discard data written by a format
     this build does not understand.
     """
-
 
 #: ``meta`` row key holding the schema version written by :meth:`Storage.init`.
 _SCHEMA_VERSION_KEY: str = "schema_version"
@@ -93,7 +94,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     premise TEXT,
     title TEXT,
     updated_at TEXT,
-    state_json TEXT
+    state_json TEXT,
+    dm_style_json TEXT
 );
 
 CREATE TABLE IF NOT EXISTS characters (
@@ -135,6 +137,17 @@ def _add_session_columns(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE sessions ADD COLUMN {ddl}")
 
 
+def _add_dm_style_column(conn: sqlite3.Connection) -> None:
+    """Add the schema-v5 ``dm_style_json`` session column (idempotent).
+
+    ``ALTER TABLE ADD COLUMN`` fails if the column already exists, so it is
+    added only when missing. Mirrors :func:`_add_session_columns`.
+    """
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
+    if "dm_style_json" not in existing:
+        conn.execute("ALTER TABLE sessions ADD COLUMN dm_style_json TEXT")
+
+
 #: Ordered schema migrations. Each entry is ``(version, step)``: ``version``
 #: is the schema version the step produces, ``step`` is either SQL (run via
 #: ``executescript``) or a callable taking the connection. Steps run in list
@@ -144,6 +157,7 @@ _MIGRATIONS: list[tuple[int, str | Callable[[sqlite3.Connection], None]]] = [
     (2, _META_SCHEMA),  # 1 -> 2: version tracking
     (3, _ITEMS_SCHEMA),  # 2 -> 3: items table
     (4, _add_session_columns),  # 3 -> 4: session metadata columns
+    (5, _add_dm_style_column),  # 4 -> 5: DM narration style column
 ]
 
 
@@ -333,21 +347,39 @@ class Storage:
         world_theme: str,
         title: str | None = None,
         premise: str | None = None,
+        dm_style: DmStyle | dict | None = None,
     ) -> str:
         """Persist a new session and return its unique id.
 
         ``title`` defaults to ``world_theme`` when omitted or empty.
         ``premise`` is an optional LLM-generated story premise for the
-        campaign setting.
+        campaign setting. ``dm_style`` is an optional DM narration style
+        (a :class:`~open_tavern.story.style.DmStyle` or raw dict); it is
+        stored normalized via :func:`normalize_dm_style`, or ``NULL`` when
+        omitted.
         """
         session_id = uuid4().hex
         now = _now_iso()
+        style_json = (
+            json.dumps(asdict(normalize_dm_style(dm_style)))
+            if dm_style is not None
+            else None
+        )
         with self._lock, self._conn:
             self._conn.execute(
                 "INSERT INTO sessions "
-                "(id, created_at, world_theme, premise, title, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (session_id, now, world_theme, premise, title or world_theme, now),
+                "(id, created_at, world_theme, premise, title, updated_at, "
+                "dm_style_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    session_id,
+                    now,
+                    world_theme,
+                    premise,
+                    title or world_theme,
+                    now,
+                    style_json,
+                ),
             )
         return session_id
 
@@ -615,6 +647,42 @@ class Storage:
         if row is None:
             return None
         return row["premise"]
+
+    def session_dm_style(self, session_id: str) -> DmStyle | None:
+        """Return the stored DM narration style for ``session_id``, or ``None``.
+
+        Single-column probe mirroring :meth:`session_premise`. Sessions
+        created before schema v5 and cleared styles store ``NULL`` and probe
+        as ``None``. A stored value is returned normalized so a hand-edited
+        row always yields a usable style.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT dm_style_json FROM sessions WHERE id = ?", (session_id,)
+            ).fetchone()
+        if row is None or row["dm_style_json"] is None:
+            return None
+        try:
+            data = json.loads(row["dm_style_json"])
+        except (TypeError, ValueError):
+            return None
+        return normalize_dm_style(data)
+
+    def update_dm_style(self, session_id: str, style: DmStyle | dict | None) -> bool:
+        """Set the DM narration style for ``session_id``; ``True`` if a row changed.
+
+        ``None`` clears the style (later probes return ``None``). Like
+        :meth:`rename_session`, bumps ``updated_at``.
+        """
+        style_json = (
+            json.dumps(asdict(normalize_dm_style(style))) if style is not None else None
+        )
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "UPDATE sessions SET dm_style_json = ?, updated_at = ? WHERE id = ?",
+                (style_json, _now_iso(), session_id),
+            )
+        return cur.rowcount > 0
 
     def session_summary(self, session_id: str) -> dict | None:
         """Return a single session summary row, or ``None`` if unknown."""

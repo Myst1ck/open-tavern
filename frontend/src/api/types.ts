@@ -3,9 +3,24 @@
  * backend/src/open_tavern/api/schemas.py. Types only — no runtime code.
  */
 
+// ── DM narration style ─────────────────────────────────────────
+
+/** Preset tone key; mirrors the backend's `TONES` registry. */
+export type Tone = "classic" | "gritty" | "heroic" | "whimsical" | "comedic";
+
+/** Preset verbosity key; mirrors the backend's `VERBOSITIES` registry. */
+export type Verbosity = "standard" | "concise" | "rich";
+
+export interface DmStyle {
+  tone: Tone;
+  verbosity: Verbosity;
+  custom_tone: string;
+}
+
 export interface Session {
   session_id: string;
   world_theme: string;
+  dm_style: DmStyle | null;
 }
 
 export interface SessionSummary {
@@ -28,6 +43,7 @@ export interface SessionDetail {
   state: GameState | null;
   character: CharacterSheet | null;
   messages: ChatMessage[];
+  dm_style: DmStyle | null;
 }
 
 export interface AbilityScores {
@@ -138,6 +154,10 @@ export interface ActionResponse {
   state: GameState;
   rolls: RollOutcome[];
 }
+
+/** How a player action is framed: in-character speech, declared action, or a
+ * text-free scene continuation. Mirrors the backend `ActionRequest.kind`. */
+export type ActionKind = "say" | "act" | "continue";
 
 /**
  * Structured character-creation payload. All fields optional — a caller may

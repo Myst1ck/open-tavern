@@ -58,9 +58,18 @@ async def send_action(
             state = current_state(storage, session_id, character)
             history = storage.load_messages(session_id)
             premise = storage.session_premise(session_id)
+            style = storage.session_dm_style(session_id)
 
             try:
-                result = turn(body.action, state, history, client, premise=premise)
+                result = turn(
+                    body.action,
+                    state,
+                    history,
+                    client,
+                    premise=premise,
+                    style=style,
+                    kind=body.kind,
+                )
             except LLMClientError as exc:
                 raise llm_failure(exc) from exc
 

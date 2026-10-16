@@ -1,6 +1,6 @@
 /**
  * Corrupt-tolerant localStorage helper for character creation wizard draft
- * values. Mirrors the load/save pattern from api.ts.
+ * values. Mirrors the load/save pattern in the api/ modules.
  */
 
 export const CHAR_DRAFT_KEY = "open-tavern-char-draft";

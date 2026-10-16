@@ -1,27 +1,27 @@
 # Open Tavern — SETUP / Bring-Up Playbook
 
-Authoritative bring-up doc. Fresh machine → follow this. Generated 2026-08-28 by `/up`. Refreshed 2026-09-08 by `/up` — verified bring-up, all endpoints 200. Refreshed 2026-09-11 — auth/bind/proxy env vars, compose runtime, migration runner documented. Refreshed 2026-09-20 — SELinux `:Z` volume, uid 10001 ownership fix, token requirement under compose, frontend `Created`-state quirk. Refreshed 2026-09-20 (later) — backend host port now binds Tailscale IP (not loopback), CORS middleware order fix, podman-compose stale-image gotcha. Refreshed 2026-09-20 — start flow now world generation (textarea → Generate World → preview → Accept) before character creation. Refreshed 2026-09-21 — frontend image build chain fixed (pnpm pin, Node 22 base, workspace COPY, .dockerignore, preview CMD); both images rebuilt, endpoints 200. Refreshed 2026-09-21 (later) — start flow is now home → worldgen (**Forge your world**) → character → play; world generation moved off the home screen to a dedicated step entered via the **Create new tale** card. Refreshed 2026-09-21 (local mode) — local start documented with root `.env` sourcing (backend has no `.env` loader); uvicorn :8000 + vite :5173 verified 200. Refreshed 2026-09-21 (proxy architecture) — bearer-token auth removed from frontend; backend binds `127.0.0.1:8000` (localhost-only), Vite on `0.0.0.0:5173` proxies `/sessions` + `/world` to backend, tailnet devices reach frontend only. Refreshed 2026-09-21 (PWA) — installable app: header install button (desktop), Share → Add to Home Screen (iOS), NetworkFirst cache for `GET /sessions` + `/world` (300s TTL), update toast, secure-context requirement (Tailscale HTTPS / localhost).
+Authoritative bring-up doc. Fresh machine → follow this. Generated 2026-08-28 by `/up`. Refreshed 2026-09-08 by `/up` — verified bring-up, all endpoints 200. Refreshed 2026-09-11 — auth/bind/proxy env vars, compose runtime, migration runner documented. Refreshed 2026-09-20 — SELinux `:Z` volume, uid 10001 ownership fix, token requirement under compose, frontend `Created`-state quirk. Refreshed 2026-09-20 (later) — backend host port now binds Tailscale IP (not loopback), CORS middleware order fix, podman-compose stale-image gotcha. Refreshed 2026-09-20 — start flow now world generation (textarea → Generate World → preview → Accept) before character creation. Refreshed 2026-09-21 — frontend image build chain fixed (pnpm pin, Node 22 base, workspace COPY, .dockerignore, preview CMD); both images rebuilt, endpoints 200. Refreshed 2026-09-21 (later) — start flow is now home → worldgen (**Forge your world**) → character → play; world generation moved off the home screen to a dedicated step entered via the **Create new tale** card. Refreshed 2026-09-21 (local mode) — local start documented with root `.env` sourcing (backend has no `.env` loader); uvicorn :8000 + vite :5173 verified 200. Refreshed 2026-09-21 (proxy architecture) — bearer-token auth removed from frontend; backend binds `127.0.0.1:8000` (localhost-only), Vite on `0.0.0.0:5173` proxies `/sessions` + `/world` to backend, tailnet devices reach frontend only. Refreshed 2026-09-21 (PWA) — installable app: header install button (desktop), Share → Add to Home Screen (iOS), NetworkFirst cache for `GET /sessions` + `/world` (300s TTL), update toast, secure-context requirement (Tailscale HTTPS / localhost). Refreshed 2026-10-10 (local) — local re-verified (stack already running): app served under `/tavern/` base (`GET /` → 302 → `/tavern/` → 200); `/tavern/sessions` + `/tavern/world` proxy variants documented; root `.env` sourcing added to Start.
 
 ## Architecture
 
-| Layer    | Tech                              | Port | Notes                          |
-|----------|-----------------------------------|------|--------------------------------|
-| Backend  | Python 3.13+ / FastAPI / uvicorn  | 8000 | API + game engine + SQLite     |
-| Frontend | React 19 / Vite 6 / TypeScript    | 5173 | Chat UI (vite preview, built dist) |
-| Storage  | SQLite (stdlib `sqlite3`)         | —    | File `backend/open_tavern.db`  |
-| AI       | OpenAI-compatible chat client     | —    | BYO key, see env vars          |
+| Layer    | Tech                             | Port | Notes                              |
+| -------- | -------------------------------- | ---- | ---------------------------------- |
+| Backend  | Python 3.13+ / FastAPI / uvicorn | 8000 | API + game engine + SQLite         |
+| Frontend | React 19 / Vite 6 / TypeScript   | 5173 | Chat UI (vite preview, built dist) |
+| Storage  | SQLite (stdlib `sqlite3`)        | —    | File `backend/open_tavern.db`      |
+| AI       | OpenAI-compatible chat client    | —    | BYO key, see env vars              |
 
 Docker/Podman available. No separate DB/cache/queue services. Two containers total.
 
 ## Services
 
-| Service  | Access URL            | Health endpoint                | Healthy response                          |
-|----------|-----------------------|--------------------------------|-------------------------------------------|
-| Backend  | http://127.0.0.1:8000 | `GET /sessions` → 200          | JSON array of session summaries           |
-| Backend  | http://127.0.0.1:8000/docs | `GET /docs` → 200             | Swagger UI |
-| Frontend | http://<host-ip>:5173 | `GET /` → 200                  | Vite-served HTML                          |
+| Service  | Access URL                    | Health endpoint                                   | Healthy response                       |
+| -------- | ----------------------------- | ------------------------------------------------- | -------------------------------------- |
+| Backend  | http://127.0.0.1:8000         | `GET /sessions` → 200                             | JSON array of session summaries        |
+| Backend  | http://127.0.0.1:8000/docs    | `GET /docs` → 200                                 | Swagger UI                             |
+| Frontend | http://<host-ip>:5173/tavern/ | `GET /tavern/` → 200 (`GET /` → 302 → `/tavern/`) | Vite-served HTML (app base `/tavern/`) |
 
-Backend binds `127.0.0.1` by default (`OPEN_TAVERN_BIND_HOST`, loopback only); frontend dev server binds `0.0.0.0`. Reachable at `http://localhost:<port>` locally. **Proxy architecture:** the frontend Vite server proxies `/sessions` and `/world` to `http://127.0.0.1:8000`, so remote (tailnet) browsers talk to the frontend origin only — the backend is never exposed off-host and no bearer token is used. Tailnet is the trust boundary.
+Backend binds `127.0.0.1` by default (`OPEN_TAVERN_BIND_HOST`, loopback only); frontend dev server binds `0.0.0.0`. Reachable at `http://localhost:<port>` locally. **Proxy architecture:** the frontend Vite server proxies `/sessions` and `/world` (plus `/tavern/sessions` + `/tavern/world`, `/tavern` prefix stripped) to `http://127.0.0.1:8000`, so remote (tailnet) browsers talk to the frontend origin only — the backend is never exposed off-host and no bearer token is used. Tailnet is the trust boundary.
 
 Note: no root `/` API route — `/` on :8000 returns 404 by design. Use `/sessions` or `/docs` for health.
 
@@ -29,21 +29,21 @@ Note: no root `/` API route — `/` on :8000 returns 404 by design. Use `/sessio
 
 ### Backend (read from process env; no `.env` file loader — export or run with env)
 
-| Variable           | Default                    | Required | Description                        |
-|--------------------|----------------------------|----------|------------------------------------|
-| `OPENAI_API_KEY`   | —                          | no       | OpenAI-compatible API key. Optional — app starts without it; AI calls return 503 until set (env or app config) |
-| `OPENAI_BASE_URL`  | `https://api.openai.com/v1`| no       | Provider base URL. Env-only — `X-Base-URL` header removed, not honored |
-| `OPENAI_MODEL`     | `gpt-4o-mini`              | no       | Model to call                      |
-| `OPEN_TAVERN_DB`   | `open_tavern.db`           | no       | SQLite file path (relative to cwd) |
-| `OPEN_TAVERN_BIND_HOST` | `127.0.0.1`          | no       | uvicorn bind host. Compose sets `0.0.0.0` (container network); host port binds the machine's Tailscale IP (see Production runtime) |
-| `OPEN_TAVERN_TRUST_PROXY` | — (unset)          | no       | `=1` trusts `X-Forwarded-For` for rate-limit client keys. Default off — header ignored |
-| `OPEN_TAVERN_ALLOWED_ORIGINS` | `http://localhost:3000` | no       | Comma-separated CORS origins. Not needed under the proxy architecture — the browser only talks to the frontend origin (same-origin), so no cross-origin requests occur |
+| Variable                      | Default                     | Required | Description                                                                                                                                                            |
+| ----------------------------- | --------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `OPENAI_API_KEY`              | —                           | no       | OpenAI-compatible API key. Optional — app starts without it; AI calls return 503 until set (env or app config)                                                         |
+| `OPENAI_BASE_URL`             | `https://api.openai.com/v1` | no       | Provider base URL. Env-only — `X-Base-URL` header removed, not honored                                                                                                 |
+| `OPENAI_MODEL`                | `gpt-4o-mini`               | no       | Model to call                                                                                                                                                          |
+| `OPEN_TAVERN_DB`              | `open_tavern.db`            | no       | SQLite file path (relative to cwd)                                                                                                                                     |
+| `OPEN_TAVERN_BIND_HOST`       | `127.0.0.1`                 | no       | uvicorn bind host. Compose sets `0.0.0.0` (container network); host port binds the machine's Tailscale IP (see Production runtime)                                     |
+| `OPEN_TAVERN_TRUST_PROXY`     | — (unset)                   | no       | `=1` trusts `X-Forwarded-For` for rate-limit client keys. Default off — header ignored                                                                                 |
+| `OPEN_TAVERN_ALLOWED_ORIGINS` | `http://localhost:3000`     | no       | Comma-separated CORS origins. Not needed under the proxy architecture — the browser only talks to the frontend origin (same-origin), so no cross-origin requests occur |
 
 ### Frontend (`.env` file, `frontend/.env`, copy of `frontend/.env.example`)
 
-| Variable             | Default                    | Required | Description             |
-|----------------------|----------------------------|----------|-------------------------|
-| `VITE_API_BASE_URL` | `""` (same-origin)         | no       | Backend base URL. Default empty → requests go to the page origin and Vite proxies `/sessions` + `/world` to `http://127.0.0.1:8000`. Override only for non-proxied setups. Key present in `.env.example` as commented-out line |
+| Variable            | Default            | Required | Description                                                                                                                                                                                                                                               |
+| ------------------- | ------------------ | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `VITE_API_BASE_URL` | `""` (same-origin) | no       | Backend base URL. Default empty → requests go to the page origin and Vite proxies `/sessions` + `/world` (and `/tavern/*` variants) to `http://127.0.0.1:8000`. Override only for non-proxied setups. Key present in `.env.example` as commented-out line |
 
 Backend has no `.env` file — export vars or run with env. `OPENAI_API_KEY` optional — app boots without it; AI features (character generation, GM narration) fail with 503 until key set via env or app config. Note: `podman-compose` reads a root `.env` for variable interpolation — that is compose-level, not a backend loader.
 
@@ -65,7 +65,8 @@ cp .env.example .env          # only if .env missing
 ## Start
 
 ```bash
-# backend (terminal 1) — from backend/
+# backend (terminal 1) — from repo root
+set -a; source .env; set +a      # root .env (OPENAI_BASE_URL, allowed origins) — backend has no .env loader
 cd backend
 .venv/bin/uvicorn open_tavern.api.main:app --host 127.0.0.1 --port 8000
 # optional hot reload: add --reload
@@ -73,10 +74,12 @@ cd backend
 # frontend (terminal 2) — from frontend/
 cd frontend
 npm run dev -- --host 0.0.0.0 --port 5173
+# app URL: http://localhost:5173/tavern/ — Vite base defaults to /tavern/ (VITE_BASE override);
+# GET / on :5173 redirects (302) to /tavern/
 ```
 
 **No auth needed.** Backend binds loopback (`127.0.0.1`). The Vite dev server
-proxies `/sessions` and `/world` to the backend, so the browser only ever talks
+proxies `/sessions`, `/world`, and their `/tavern/*` variants to the backend, so the browser only ever talks
 to the frontend origin. Do not bind the backend to `0.0.0.0` — that would expose
 the API to the network.
 
@@ -107,11 +110,12 @@ step, not part of the home screen.
 > ⚠️ podman-compose 1.5.0 may print `Build command failed` after a HEALTHCHECK OCI-format warning. Non-fatal — verify image tagged (`podman images`) before treating as failure.
 > ⚠️ **Stale image:** `podman-compose up -d --build backend` may build a new image but NOT recreate the container — the running container keeps the old image. Fix: `podman rm -f <container>` then `podman-compose up -d <service>`. Verify the container's image: `podman inspect <container> --format '{{.Image}}'`.
 > ⚠️ **Frontend build chain (fixed 2026-09-21, keep these invariants):** frontend image builds with pnpm, not npm. Four things must stay true or build fails:
+>
 > 1. `frontend/package.json` pins `"packageManager": "pnpm@11.22.0"` — bare `corepack enable` fetches latest pnpm (12.x), which hard-fails install with `ERR_PNPM_IGNORED_BUILDS`.
 > 2. pnpm 11 requires Node ≥22.13 (`node:sqlite` builtin) — Dockerfile base MUST be `node:22-slim`, not node:20.
 > 3. Dockerfile `COPY` must include `pnpm-workspace.yaml` (holds `allowBuilds: esbuild: true`); omitting it → `ERR_PNPM_IGNORED_BUILDS` again.
 > 4. `frontend/.dockerignore` must exclude `node_modules`, `dist`, `*.tsbuildinfo`, `.env` — compose build context is `./frontend`, root `.dockerignore` does not apply; host `node_modules` copied in makes `pnpm build` abort (`ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`).
-> ⚠️ **Frontend CMD:** `pnpm preview -- --host ...` is broken — pnpm passes `--` through to the script, vite treats it as end-of-options and binds localhost:4173 (container port 5173 dead, curl 000). Correct CMD: `pnpm exec vite preview --host 0.0.0.0 --port 5173`.
+>    ⚠️ **Frontend CMD:** `pnpm preview -- --host ...` is broken — pnpm passes `--` through to the script, vite treats it as end-of-options and binds localhost:4173 (container port 5173 dead, curl 000). Correct CMD: `pnpm exec vite preview --host 0.0.0.0 --port 5173`.
 
 ### Quick start
 
@@ -189,14 +193,14 @@ podman cp $(podman-compose ps -q backend):/data/open_tavern.db ./open_tavern.db
 
 ### Files referenced
 
-| File | Purpose |
-|------|---------|
-| `backend/Dockerfile` | Python 3.13-slim, installs deps, runs uvicorn on `0.0.0.0:8000` |
-| `frontend/Dockerfile` | Node 22-slim, pnpm 11.22.0 (corepack via `packageManager` pin), builds dist, serves via `vite preview` on `0.0.0.0:5173` |
-| `frontend/.dockerignore` | Excludes `node_modules`, `dist`, `*.tsbuildinfo`, `.env` from frontend build context |
-| `frontend/pnpm-workspace.yaml` | `allowBuilds: esbuild: true` — required inside image (Dockerfile COPY) or pnpm install fails |
-| `docker-compose.yml` | Defines `backend` + `frontend` services, `backend-data` volume, port mappings |
-| `.dockerignore` | Excludes `.git`, `node_modules`, `.env`, `*.md`, Dockerfiles from build context |
+| File                           | Purpose                                                                                                                  |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `backend/Dockerfile`           | Python 3.13-slim, installs deps, runs uvicorn on `0.0.0.0:8000`                                                          |
+| `frontend/Dockerfile`          | Node 22-slim, pnpm 11.22.0 (corepack via `packageManager` pin), builds dist, serves via `vite preview` on `0.0.0.0:5173` |
+| `frontend/.dockerignore`       | Excludes `node_modules`, `dist`, `*.tsbuildinfo`, `.env` from frontend build context                                     |
+| `frontend/pnpm-workspace.yaml` | `allowBuilds: esbuild: true` — required inside image (Dockerfile COPY) or pnpm install fails                             |
+| `docker-compose.yml`           | Defines `backend` + `frontend` services, `backend-data` volume, port mappings                                            |
+| `.dockerignore`                | Excludes `.git`, `node_modules`, `.env`, `*.md`, Dockerfiles from build context                                          |
 
 ## k3s Deployment (prod — `slave` cluster)
 
@@ -249,10 +253,12 @@ curl -s -o /dev/null -w "%{http_code}\n" https://slave.tail7c13f3.ts.net/tavern/
 ## Remote Access (LAN / Tailscale)
 
 Frontend is same-origin: `frontend/src/api.ts` uses an empty base URL, so requests
-go to the page origin and the Vite server proxies `/sessions` + `/world` to
+go to the page origin and the Vite server proxies `/sessions` + `/world` (and
+`/tavern/sessions` + `/tavern/world`, prefix stripped) to
 `http://127.0.0.1:8000`. No `VITE_API_BASE_URL` override needed.
 
 Required for remote access:
+
 1. Backend MUST stay on loopback (`127.0.0.1`, the default) — it is reached only through the Vite proxy, never directly.
 2. Frontend MUST bind `0.0.0.0` (`--host 0.0.0.0`).
 3. Firewall open on port 5173 only (8000 stays loopback).
@@ -269,26 +275,32 @@ Frontend ships a service worker + web app manifest, so the app can be installed 
 **Requirement — secure context.** Service workers need HTTPS (or `localhost`). Remote/tailnet access must use Tailscale HTTPS (`https://<machine>.<tailnet>.ts.net`); plain `http://<host-ip>:5173` is not a secure context and the PWA will not register.
 
 **Install**
+
 - **Desktop (Chrome/Edge):** an install button appears in the app header when the browser fires `beforeinstallprompt`. Click it → confirm the browser prompt.
 - **iOS Safari:** no install button. Tap **Share → Add to Home Screen**.
 
 **Offline behavior**
+
 - `GET /sessions` and `GET /world` are cached NetworkFirst with a 5-minute (300s) TTL — served from cache when offline, refreshed in the background when online.
 - Writes (`POST`/`PUT`/`DELETE`) are not cached and not retried — they require connectivity and fail fast. No Background Sync.
 
 **Update prompt**
+
 - Service worker uses `registerType: 'prompt'`. When a new build is deployed a toast appears; **Refresh** reloads the app via `updateServiceWorker(true)`.
 - The `offlineReady` toast ('App ready to work offline') appears on the first visit where the service worker becomes ready, not only on updates.
 
 **Dev mode**
+
 - PWA is enabled in dev too (`devOptions.enabled: true`), so the service worker and install prompt are testable against the Vite dev server.
 
 ## Health Check
 
 ```bash
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8000/sessions   # expect 200
-curl -s -o /dev/null -w "%{http_code}\n" http://<host-ip>:5173/           # expect 200
+curl -s -o /dev/null -w "%{http_code}\n" http://<host-ip>:5173/           # expect 302 (redirects to /tavern/)
+curl -s -o /dev/null -w "%{http_code}\n" http://<host-ip>:5173/tavern/    # expect 200 (app HTML)
 curl -s -o /dev/null -w "%{http_code}\n" http://<host-ip>:5173/sessions   # expect 200 (proxied)
+curl -s -o /dev/null -w "%{http_code}\n" http://<host-ip>:5173/tavern/sessions   # expect 200 (proxied, prefix stripped)
 ```
 
 `<host-ip>` = LAN IP of machine (e.g. `192.168.1.213`). `localhost` works for local access.
@@ -349,3 +361,4 @@ Remote over internet (not LAN) also needs router port-forwarding to this machine
    browser host. `.env.example` now documents the optional `VITE_API_BASE_URL` override.
 4. **Frontend auth removed (2026-09-21)** — bearer-token machinery deleted from the frontend (`getToken`/`setToken`/`adoptTokenFromQuery` gone; no `Authorization` header). Backend binds loopback and Vite proxies `/sessions` + `/world`; tailnet is the trust boundary. No token to paste.
 5. **Local mode verified 2026-09-21** — uvicorn `127.0.0.1:8000` + vite `0.0.0.0:5173`; `GET /sessions` → 200, `GET /` → 200. Ports were free; no containers running.
+6. **Local mode re-verified 2026-10-10** — stack already running from this repo (uvicorn started 2026-10-10, vite since 2026-09-25). `GET /sessions` → 200; `GET /` → 302 → `GET /tavern/` → 200; proxied `/sessions` + `/tavern/sessions` → 200. ⚠️ Backend process env carried `OPENROUTER_API_KEY` but no `OPENAI_API_KEY` — the app reads only `OPENAI_API_KEY`, so AI endpoints 503 until it is exported (`OPENAI_BASE_URL` already points at OpenRouter).

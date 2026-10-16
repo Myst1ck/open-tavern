@@ -19,9 +19,12 @@ import {
   saveSettings,
   type TavernSettings,
 } from "./api/settings";
+import { DEFAULT_DM_STYLE } from "./api/style";
 import { sendAction } from "./api/turn";
 import {
+  type ActionKind,
   type CharacterSheet,
+  type DmStyle,
   type GameState,
   type Item,
   type Session,
@@ -31,11 +34,13 @@ import CharacterCreationView from "./components/CharacterCreationView";
 import CharacterSheetView from "./components/CharacterSheet";
 import Chat, { type Message } from "./components/Chat";
 import CreateTaleCard from "./components/CreateTaleCard";
+import DmStylePanel from "./components/DmStylePanel";
 import FilterBar, { type FilterState } from "./components/FilterBar";
 import InstallButton from "./components/InstallButton";
 import InventoryGrid from "./components/InventoryGrid";
 import ItemModal from "./components/ItemModal";
 import ItemTooltip from "./components/ItemTooltip";
+import PlayTabs, { type PlayTabId } from "./components/PlayTabs";
 import SavedTalesList from "./components/SavedTalesList";
 import SettingsPanel from "./components/SettingsPanel";
 import StateView from "./components/StateView";
@@ -107,6 +112,7 @@ function InventoryPanel({ items, onItemClick }: InventoryPanelProps) {
 export default function App() {
   const [phase, setPhase] = useState<Phase>("home");
   const [session, setSession] = useState<Session | null>(null);
+  const [dmStyle, setDmStyle] = useState<DmStyle>(DEFAULT_DM_STYLE);
   const [character, setCharacter] = useState<CharacterSheet | null>(null);
   const [state, setState] = useState<GameState | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -122,6 +128,7 @@ export default function App() {
   });
   const [selectedItem, setSelectedItem] = useState<Item | null>(null);
   const [itemBusy, setItemBusy] = useState(false);
+  const [playTab, setPlayTab] = useState<PlayTabId>("campaign");
 
   const refreshSessions = async () => {
     setSessionsBusy(true);
@@ -222,16 +229,26 @@ export default function App() {
     setSettings(next);
   };
 
-  const handleStart = async (worldTheme: string, premise: string) => {
+  const handleStart = async (
+    worldTheme: string,
+    premise: string,
+    style: DmStyle,
+  ) => {
     setBusy(true);
     setError(null);
     try {
-      const created = await createSession(worldTheme, undefined, premise);
+      const created = await createSession(
+        worldTheme,
+        undefined,
+        premise,
+        style,
+      );
       setSession(created);
       // A fresh session resets any character progress from a prior world.
       setCharacter(null);
       setState(null);
       setMessages([]);
+      setDmStyle(style);
       setPhase("character");
     } catch (err) {
       setError(toMessage(err));
@@ -268,6 +285,7 @@ export default function App() {
     // then wiped by the persisted transcript) while it is still arriving.
     setBusy(true);
     setCharacter(character);
+    setPlayTab("campaign");
     setPhase("play");
     const fallback: Message = {
       id: newId(),
@@ -310,9 +328,11 @@ export default function App() {
       setSession({
         session_id: detail.meta.id,
         world_theme: detail.meta.world_theme,
+        dm_style: detail.dm_style,
       });
       setCharacter(character);
       setState(character !== null ? detail.state : null);
+      setDmStyle(detail.dm_style ?? DEFAULT_DM_STYLE);
       // Persisted transcript as-is; the AI opening is already the first
       // assistant message. No synthetic intro is injected here.
       const persisted: Message[] = detail.messages.map((message) => ({
@@ -322,6 +342,7 @@ export default function App() {
         rolls: [],
       }));
       setMessages(persisted);
+      setPlayTab("campaign");
       // A session without a character has no play view to land in.
       setPhase(character !== null ? "play" : "character");
     } catch (err) {
@@ -356,11 +377,12 @@ export default function App() {
     setState(null);
     setMessages([]);
     setError(null);
+    setPlayTab("campaign");
     setPhase("home");
     void refreshSessions();
   };
 
-  const handleSendAction = async (action: string) => {
+  const handleSendAction = async (action: string, kind: ActionKind) => {
     // A turn sent while an item mutation is in flight would persist state
     // computed before that mutation committed.
     if (session === null || busy || itemBusy) {
@@ -371,12 +393,13 @@ export default function App() {
     const playerMessage: Message = {
       id: newId(),
       role: "player",
-      content: action,
+      content: kind === "continue" ? "" : action,
       rolls: [],
+      kind,
     };
     setMessages((prev) => [...prev, playerMessage]);
     try {
-      const response = await sendAction(session.session_id, action);
+      const response = await sendAction(session.session_id, action, kind);
       const gmMessage: Message = {
         id: newId(),
         role: "gm",
@@ -437,29 +460,57 @@ export default function App() {
             onBack={handleBackToWorldGen}
           />
         )}
-        {phase === "play" && (
+        {phase === "play" && session !== null && (
           <>
-            <button
-              type="button"
-              className="back-button"
-              onClick={handleBackToHome}
-              disabled={busy}
-            >
-              ← Back to tales
-            </button>
-            <div className="play-grid">
-              <Chat
-                messages={messages}
-                busy={busy}
-                error={error}
-                onSend={handleSendAction}
-              />
-              <aside className="play-sidebar">
-                <StateView state={state} />
-                {character !== null && (
-                  <CharacterSheetView character={character} />
-                )}
-                {character !== null && character.inventory.length > 0 && (
+            <div className="play-topbar">
+              <button
+                type="button"
+                className="back-button play-back"
+                aria-label="Back to tales"
+                title="Back to tales"
+                onClick={handleBackToHome}
+                disabled={busy}
+              >
+                ← Tales
+              </button>
+              <PlayTabs active={playTab} onChange={setPlayTab} />
+            </div>
+            <div className="play-content">
+              {/* Chat stays mounted so scroll position and input survive tab
+                  round-trips; hidden via CSS rather than unmounted. */}
+              <div
+                className={`play-tab-panel${playTab === "campaign" ? "" : " play-tab-hidden"}`}
+                role="tabpanel"
+                id="play-panel-campaign"
+                aria-labelledby="play-tab-campaign"
+              >
+                <Chat
+                  messages={messages}
+                  busy={busy}
+                  error={error}
+                  onSend={handleSendAction}
+                />
+              </div>
+              {playTab === "character" && (
+                <div
+                  className="play-tab-panel"
+                  role="tabpanel"
+                  id="play-panel-character"
+                  aria-labelledby="play-tab-character"
+                >
+                  <StateView state={state} />
+                  {character !== null && (
+                    <CharacterSheetView character={character} />
+                  )}
+                </div>
+              )}
+              {playTab === "inventory" && (
+                <div
+                  className="play-tab-panel"
+                  role="tabpanel"
+                  id="play-panel-inventory"
+                  aria-labelledby="play-tab-inventory"
+                >
                   <section className="panel">
                     <h2>Inventory</h2>
                     <FilterBar
@@ -471,8 +522,22 @@ export default function App() {
                       onItemClick={handleItemClick}
                     />
                   </section>
-                )}
-              </aside>
+                </div>
+              )}
+              {playTab === "dm-style" && (
+                <div
+                  className="play-tab-panel"
+                  role="tabpanel"
+                  id="play-panel-dm-style"
+                  aria-labelledby="play-tab-dm-style"
+                >
+                  <DmStylePanel
+                    sessionId={session.session_id}
+                    value={dmStyle}
+                    onChange={setDmStyle}
+                  />
+                </div>
+              )}
             </div>
             {selectedItem !== null && (
               <ItemModal

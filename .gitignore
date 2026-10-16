@@ -24,3 +24,7 @@ frontend/dev-dist/
 # OpenCode agent state
 .opencode/goals/
 .opencode/
+
+# OMP
+.omp/
+PLAN.md

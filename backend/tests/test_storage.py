@@ -17,6 +17,7 @@ from open_tavern.storage.db import (
     SchemaCorruptError,
     SchemaTooNewError,
 )
+from open_tavern.story.style import DmStyle, normalize_dm_style
 
 
 def _make_character(name: str = "Aria") -> CharacterSheet:
@@ -148,7 +149,7 @@ def test_migration_preserves_legacy_unversioned_saves(tmp_path):
     # Legacy version-1 saves are MIGRATED forward, never dropped.
     assert {"title", "updated_at", "state_json", "premise"} <= cols
     assert rows == [("abc", "gothic")]
-    assert version is not None and version["value"] == "4"
+    assert version is not None and version["value"] == "5"
 
 
 def test_migration_applies_steps_in_order(tmp_path):
@@ -187,11 +188,53 @@ def test_migration_applies_steps_in_order(tmp_path):
     finally:
         conn.close()
 
-    # v2 -> v3 (items table) -> v4 (session columns), data preserved.
+    # v2 -> v3 (items table) -> v4 (session columns) -> v5 (dm_style_json),
+    # data preserved.
     assert "items" in tables
     assert {"title", "updated_at", "state_json", "premise"} <= cols
     assert rows == [("abc", "gothic")]
-    assert version is not None and version["value"] == "4"
+    assert version is not None and version["value"] == "5"
+
+
+def test_migration_v4_adds_dm_style_column(tmp_path):
+    path = tmp_path / "v4.db"
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    conn.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '4')")
+    conn.execute(
+        "CREATE TABLE sessions ("
+        "id TEXT PRIMARY KEY, created_at TEXT NOT NULL, world_theme TEXT NOT NULL, "
+        "premise TEXT, title TEXT, updated_at TEXT, state_json TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO sessions (id, created_at, world_theme, premise) "
+        "VALUES ('abc', 't0', 'gothic', 'a cursed inn')"
+    )
+    conn.commit()
+    conn.close()
+
+    store = Storage(str(path))
+    store.init()
+    store.close()
+
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    try:
+        cols = {row["name"] for row in conn.execute("PRAGMA table_info(sessions)")}
+        rows = [
+            tuple(r)
+            for r in conn.execute("SELECT id, world_theme, premise FROM sessions")
+        ]
+        version = conn.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version'"
+        ).fetchone()
+    finally:
+        conn.close()
+
+    # v4 -> v5 adds dm_style_json; existing columns and rows survive.
+    assert "dm_style_json" in cols
+    assert rows == [("abc", "gothic", "a cursed inn")]
+    assert version is not None and version["value"] == "5"
 
 
 def test_migration_refuses_newer_database(tmp_path):
@@ -278,6 +321,44 @@ def test_create_session_premise_empty_string(storage):
     loaded = storage.load_session(session_id)
     assert loaded is not None
     assert loaded["premise"] == ""
+
+
+# --- dm style ------------------------------------------------------------
+
+
+def test_create_session_and_probe_dm_style(storage):
+    style = DmStyle("gritty", "concise", "speak like a sea dog")
+    session_id = storage.create_session("gothic", dm_style=style)
+    assert storage.session_dm_style(session_id) == normalize_dm_style(style)
+
+
+def test_create_session_without_dm_style_probes_none(storage):
+    session_id = storage.create_session("gothic")
+    assert storage.session_dm_style(session_id) is None
+    assert storage.session_dm_style("unknown-session") is None
+
+
+def test_create_session_normalizes_dm_style_dict(storage):
+    session_id = storage.create_session(
+        "gothic", dm_style={"tone": "nope", "custom_tone": 7}
+    )
+    assert storage.session_dm_style(session_id) == normalize_dm_style(
+        {"tone": "nope", "custom_tone": 7}
+    )
+
+
+def test_update_dm_style_roundtrip_and_clear(storage):
+    session_id = storage.create_session("gothic")
+    style = normalize_dm_style({"tone": "heroic", "verbosity": "rich"})
+
+    assert storage.update_dm_style(session_id, style) is True
+    assert storage.session_dm_style(session_id) == style
+
+    # Clearing stores NULL; cleared and legacy rows probe as None.
+    assert storage.update_dm_style(session_id, None) is True
+    assert storage.session_dm_style(session_id) is None
+
+    assert storage.update_dm_style("unknown-session", style) is False
 
 
 # --- sessions ------------------------------------------------------------
