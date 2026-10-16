@@ -20,7 +20,9 @@ from functools import lru_cache
 from typing import Protocol
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi.responses import StreamingResponse
 
+from open_tavern.api import turn_stream
 from open_tavern.api.ratelimit import RateLimiter
 from open_tavern.api.schemas import (
     ActionRequest,
@@ -44,7 +46,6 @@ from open_tavern.api.schemas import (
     WorldGenerateRequest,
     WorldGenerateResponse,
     character_to_dict,
-    roll_to_dict,
     state_to_dict,
 )
 from open_tavern.character import CharacterSheet
@@ -56,7 +57,6 @@ from open_tavern.story import (
     OpenAIClient,
     generate_character,
     generate_class,
-    turn,
 )
 from open_tavern.story.character_gen import _parse_json
 from open_tavern.story.client import LLMClientError
@@ -568,44 +568,27 @@ async def send_action(
     request: Request,
     storage: Storage = Depends(get_storage),
     client: ChatClient = Depends(get_per_request_client),
-) -> ActionResponse:
-    """Process a player action and return narration plus updated state.
+) -> StreamingResponse:
+    """Stream a player action turn as Server-Sent Events.
 
-    The whole lock-held section (state load, LLM turn, atomic persistence)
-    runs on the bounded executor, so the per-session lock is only ever
-    waited on from an executor worker — never the shared threadpool.
+    Pre-stream validation (404/409/429) and executor-slot reservation (503)
+    happen before the response exists, so those failures stay plain HTTP
+    status codes. Once the stream opens, the turn runs on the bounded
+    executor and reports progress as ``roll`` frames followed by exactly one
+    terminal ``message`` or ``error`` frame — see :mod:`open_tavern.api.turn_stream`.
     """
-    await asyncio.to_thread(_ensure_session, storage, session_id)
-    _enforce_rate_limit(request, _action_limiter, "action")
-
-    def _run_turn():
-        with _session_lock_ctx(session_id):
-            # Re-check under the lock: a delete queued ahead of this action
-            # would otherwise surface as 409 (missing character) instead of
-            # 404.
-            _ensure_session(storage, session_id)
-            character = _require_character(storage, session_id)
-            state = _current_state(storage, session_id, character)
-            history = storage.load_messages(session_id)
-            premise = storage.session_premise(session_id)
-
-            try:
-                result = turn(body.action, state, history, client, premise=premise)
-            except LLMClientError as exc:
-                raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-            # State + both transcript messages commit as a single storage
-            # transaction so a crash cannot leave state and transcript
-            # diverging (e.g. state advanced but the player message lost).
-            storage.save_turn(session_id, result.state, body.action, result.narration)
-            _cache_state(session_id, result.state)
-        return result
-
-    result = await _run_llm_task(_run_turn)
-    return ActionResponse(
-        narration=result.narration,
-        state=state_to_dict(result.state),
-        rolls=[roll_to_dict(roll) for roll in result.rolls],
+    prepared = await turn_stream.prepare_action(
+        session_id=session_id,
+        action=body.action,
+        storage=storage,
+        client=client,
+        request=request,
+        limiter=_action_limiter,
+    )
+    return StreamingResponse(
+        turn_stream.stream_action(prepared),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 

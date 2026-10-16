@@ -11,7 +11,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from open_tavern.api.main import create_app
-from open_tavern.api.routes import get_storage
+from open_tavern.api.routes import get_client, get_storage
+from open_tavern.character.models import AbilityScores, CharacterSheet
 from open_tavern.storage import Storage
 
 
@@ -23,10 +24,43 @@ def storage() -> Storage:
     store.close()
 
 
-def _client(storage: Storage) -> TestClient:
+class _NarratingClient:
+    """Chat client stub that narrates without requesting any checks."""
+
+    def chat(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.7,
+        json_mode: bool = False,
+    ) -> str:
+        return "The tavern falls quiet."
+
+
+def _client(storage: Storage, fake: _NarratingClient | None = None) -> TestClient:
     app = create_app()
     app.dependency_overrides[get_storage] = lambda: storage
+    if fake is not None:
+        app.dependency_overrides[get_client] = lambda: fake
     return TestClient(app)
+
+
+def _seed_character(storage: Storage) -> str:
+    """Persist a session + character so action requests clear validation."""
+    session_id = storage.create_session("gothic")
+    storage.save_character(
+        session_id,
+        CharacterSheet(
+            race="human",
+            character_class="fighter",
+            level=1,
+            abilities=AbilityScores(16, 12, 14, 10, 13, 8),
+            skills={},
+            hp=12,
+            max_hp=12,
+            proficiency_bonus=2,
+        ),
+    )
+    return session_id
 
 
 def _exhaust_create_limit(client: TestClient) -> None:
@@ -73,3 +107,25 @@ def test_x_forwarded_for_used_when_flag_on(storage, monkeypatch):
     )
 
     assert resp.status_code == 201
+
+
+def test_action_rate_limit_is_plain_http_before_stream_opens(storage):
+    """The actions limiter rejects with a plain 429 — no SSE stream opens."""
+    client = _client(storage, _NarratingClient())
+    session_id = _seed_character(storage)
+
+    # The action limiter allows 10 requests; the 11th is rejected pre-stream.
+    for _ in range(10):
+        resp = client.post(
+            f"/sessions/{session_id}/actions", json={"action": "look around"}
+        )
+        assert resp.status_code == 200
+
+    resp = client.post(
+        f"/sessions/{session_id}/actions", json={"action": "look around"}
+    )
+
+    assert resp.status_code == 429
+    assert resp.json()["detail"] == "rate limit exceeded"
+    # Rejected before the response exists: no SSE frames in the body.
+    assert "event:" not in resp.text
