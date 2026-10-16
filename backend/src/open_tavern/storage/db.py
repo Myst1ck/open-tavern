@@ -45,6 +45,7 @@ class SchemaTooNewError(RuntimeError):
     refuses instead of dropping or silently proceeding.
     """
 
+
 #: ``meta`` row key holding the schema version written by :meth:`Storage.init`.
 _SCHEMA_VERSION_KEY: str = "schema_version"
 

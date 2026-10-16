@@ -490,9 +490,7 @@ def test_build_client_from_headers_invalid_base_url_raises_400(monkeypatch):
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
 
     with pytest.raises(HTTPException) as excinfo:
-        build_client_from_headers(
-            api_key="sk-test", model="", base_url="not-a-url"
-        )
+        build_client_from_headers(api_key="sk-test", model="", base_url="not-a-url")
 
     assert excinfo.value.status_code == 400
 
@@ -735,9 +733,7 @@ def test_create_character_without_opening_appends_no_message(storage):
 
 def _session_with_character(client: TestClient, storage: Storage) -> str:
     session_id = storage.create_session("gothic")
-    resp = client.post(
-        f"/sessions/{session_id}/character", json={"description": "elf"}
-    )
+    resp = client.post(f"/sessions/{session_id}/character", json={"description": "elf"})
     assert resp.status_code == 200
     return session_id
 
@@ -870,9 +866,9 @@ def test_get_item_unknown_404(storage):
 def test_delete_item(storage):
     client = _make_client(storage, FakeClient([json.dumps(_valid_sheet_raw())]))
     session_id = _session_with_character(client, storage)
-    item_id = client.post(_item_url(session_id), json={"name": "Sword"}).json()[
-        "item"
-    ]["id"]
+    item_id = client.post(_item_url(session_id), json={"name": "Sword"}).json()["item"][
+        "id"
+    ]
 
     resp = client.delete(_item_url(session_id, item_id))
 
@@ -895,9 +891,9 @@ def test_delete_item_missing_returns_success_false(storage):
 def test_equip_item(storage):
     client = _make_client(storage, FakeClient([json.dumps(_valid_sheet_raw())]))
     session_id = _session_with_character(client, storage)
-    item_id = client.post(_item_url(session_id), json={"name": "Sword"}).json()[
-        "item"
-    ]["id"]
+    item_id = client.post(_item_url(session_id), json={"name": "Sword"}).json()["item"][
+        "id"
+    ]
 
     resp = client.post(_item_url(session_id, f"{item_id}/equip"))
 
@@ -909,9 +905,9 @@ def test_equip_item(storage):
 def test_unequip_item(storage):
     client = _make_client(storage, FakeClient([json.dumps(_valid_sheet_raw())]))
     session_id = _session_with_character(client, storage)
-    item_id = client.post(_item_url(session_id), json={"name": "Sword"}).json()[
-        "item"
-    ]["id"]
+    item_id = client.post(_item_url(session_id), json={"name": "Sword"}).json()["item"][
+        "id"
+    ]
     client.post(_item_url(session_id, f"{item_id}/equip"))
 
     resp = client.post(_item_url(session_id, f"{item_id}/unequip"))

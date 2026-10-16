@@ -176,7 +176,9 @@ def test_migration_applies_steps_in_order(tmp_path):
     try:
         tables = {
             row["name"]
-            for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
         }
         cols = {row["name"] for row in conn.execute("PRAGMA table_info(sessions)")}
         rows = [tuple(r) for r in conn.execute("SELECT id, world_theme FROM sessions")]

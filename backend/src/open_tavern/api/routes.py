@@ -218,6 +218,7 @@ async def _run_llm_task[T](fn: Callable[[], T]) -> T:
     finally:
         _LLM_EXECUTOR_SLOTS.release()
 
+
 #: Per-session locks serialize read-modify-write of a single session's state so
 #: concurrent actions cannot lose updates. Keyed by session id.
 #: Entries use ``(lock, refcount)`` tuples — the lock is only deleted when no

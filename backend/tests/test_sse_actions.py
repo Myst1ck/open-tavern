@@ -169,9 +169,7 @@ def test_llm_client_error_streams_terminal_error_frame(storage):
 
 def test_unexpected_exception_still_yields_terminal_error_frame(storage, monkeypatch):
     """A non-LLM failure in the turn task still terminates the stream cleanly."""
-    fake = _ScriptedClient(
-        ["You swing. [CHECK:strength DC12]", "You strike true."]
-    )
+    fake = _ScriptedClient(["You swing. [CHECK:strength DC12]", "You strike true."])
     client = _client(storage, fake)
     session_id = _seed_character(storage)
 
