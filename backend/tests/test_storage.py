@@ -12,7 +12,11 @@ from open_tavern.character import CharacterSheet, Goal, Quest, normalize
 from open_tavern.character.items import BaseType, Item
 from open_tavern.state import new_state, set_scene
 from open_tavern.storage import Storage
-from open_tavern.storage.db import MESSAGE_LOAD_LIMIT, SchemaTooNewError
+from open_tavern.storage.db import (
+    MESSAGE_LOAD_LIMIT,
+    SchemaCorruptError,
+    SchemaTooNewError,
+)
 from open_tavern.story.style import DmStyle, normalize_dm_style
 
 
@@ -267,6 +271,32 @@ def test_migration_refuses_newer_database(tmp_path):
     assert rows == [("abc",)]
 
 
+def test_init_refuses_unparseable_schema_version(tmp_path):
+    path = tmp_path / "corrupt.db"
+    store = Storage(str(path))
+    store.init()
+    store.close()
+    conn = sqlite3.connect(path)
+    conn.execute("UPDATE meta SET value = 'garbage' WHERE key = 'schema_version'")
+    conn.commit()
+    conn.close()
+
+    store = Storage(str(path))
+    with pytest.raises(SchemaCorruptError):
+        store.init()
+    store.close()
+
+    # Refused, not rebuilt: the unparseable version is still on disk.
+    conn = sqlite3.connect(path)
+    try:
+        version = conn.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version'"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert version is not None and version[0] == "garbage"
+
+
 # --- premise ---------------------------------------------------------------
 
 
@@ -495,6 +525,30 @@ def test_save_state_touches_updated_at(storage):
 
     # Saving state bumps ``first`` ahead of ``second`` in updated_at order.
     assert storage.list_sessions()[0]["id"] == first
+
+
+def test_save_opening_writes_state_and_message(storage):
+    session_id = storage.create_session("gothic")
+    sheet = _make_character()
+    state = new_state(sheet)
+
+    storage.save_opening(session_id, state, "Welcome to the crypt.")
+
+    assert storage.load_state(session_id, sheet) == state
+    assert storage.load_messages(session_id) == [
+        {"role": "assistant", "content": "Welcome to the crypt."}
+    ]
+
+
+def test_save_opening_without_message_writes_state_only(storage):
+    session_id = storage.create_session("gothic")
+    sheet = _make_character()
+    state = new_state(sheet)
+
+    storage.save_opening(session_id, state, None)
+
+    assert storage.load_state(session_id, sheet) == state
+    assert storage.load_messages(session_id) == []
 
 
 # --- list_sessions --------------------------------------------------------

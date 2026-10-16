@@ -10,8 +10,9 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from open_tavern.api.llm import get_client
 from open_tavern.api.main import create_app
-from open_tavern.api.routes import get_client, get_storage
+from open_tavern.api.runtime import get_storage
 from open_tavern.storage import Storage
 
 

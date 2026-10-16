@@ -22,12 +22,15 @@ from open_tavern.story.style import (
 )
 
 #: Regex matching any XML-like delimiter that fences untrusted input in
-#: prompts (``<player_*>``, ``<character_sheet>``, ``<character_description>``,
-#: ``<story_premise>``).  Stripped from user-supplied text before interpolation
-#: to prevent delimiter-escape prompt injection.
+#: prompts (``<player_*>``, ``<class_concept>``, ``<character_sheet>``,
+#: ``<character_description>``, ``<story_premise>``, ``<world_*>``).  Stripped
+#: from user-supplied text before interpolation to prevent delimiter-escape
+#: prompt injection.  Every fence used in this module must be named here: a
+#: missing name lets that field's content close its own fence and escape into
+#: instruction position.
 _DELIMITER_RE = re.compile(
-    r"</?(?:player_\w+|character_sheet|character_description|story_premise|"
-    r"world_description|world_theme)>",
+    r"</?(?:player_\w+|class_concept|character_sheet|character_description|"
+    r"story_premise|world_description|world_theme)>",
     re.IGNORECASE,
 )
 

@@ -45,6 +45,15 @@ class SchemaTooNewError(RuntimeError):
     """
 
 
+class SchemaCorruptError(RuntimeError):
+    """Raised when the stored schema version cannot be parsed.
+
+    The version is never guessed: reading it as ``0`` would run the migration
+    steps against tables that may not exist (an opaque ``no such table``
+    error), and rebuilding the schema would discard data written by a format
+    this build does not understand.
+    """
+
 #: ``meta`` row key holding the schema version written by :meth:`Storage.init`.
 _SCHEMA_VERSION_KEY: str = "schema_version"
 
@@ -197,6 +206,8 @@ class Storage:
           in order. No data is dropped.
         * stored version > ``SCHEMA_VERSION`` — database from a newer build:
           raise :class:`SchemaTooNewError` instead of opening it.
+        * stored version unparseable — corrupt ``meta`` row: raise
+          :class:`SchemaCorruptError` instead of guessing a version.
         """
         with self._lock, self._conn:
             # The meta table must exist before the version can be read.
@@ -239,8 +250,10 @@ class Storage:
     def _read_schema_version(self) -> int | None:
         """Return the stored schema version, or ``None`` if no row exists.
 
-        An unparseable stored value is treated as ``0`` so it migrates from
-        the earliest version rather than erroring.
+        Raises:
+            SchemaCorruptError: If the stored value is not an integer. Guessing
+                a version would either run migrations against tables that may
+                not exist or silently rebuild a database of unknown format.
         """
         row = self._conn.execute(
             "SELECT value FROM meta WHERE key = ?", (_SCHEMA_VERSION_KEY,)
@@ -249,8 +262,11 @@ class Storage:
             return None
         try:
             return int(row["value"])
-        except (TypeError, ValueError):
-            return 0
+        except (TypeError, ValueError) as exc:
+            raise SchemaCorruptError(
+                f"Unparseable {_SCHEMA_VERSION_KEY} value {row['value']!r} in the "
+                f"meta table; refusing to guess the schema version."
+            ) from exc
 
     def _write_schema_version(self) -> None:
         """Upsert the current schema version into the ``meta`` table."""
@@ -412,6 +428,31 @@ class Storage:
                 "VALUES (?, ?, ?, ?)",
                 (session_id, "assistant", assistant_message, now),
             )
+
+    def save_opening(
+        self, session_id: str, state: GameState, opening: str | None
+    ) -> None:
+        """Persist the seeded game state and opening narration atomically.
+
+        Mirrors :meth:`save_turn` for character creation: the state and the
+        opening assistant message commit in a single transaction, so a crash
+        between writes can never leave state and transcript diverging. The
+        message row is written only when ``opening`` is non-empty. Bumps
+        ``updated_at`` like :meth:`save_state`.
+        """
+        data_json = json.dumps(state_to_persistable(state))
+        now = _now_iso()
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE sessions SET state_json = ?, updated_at = ? WHERE id = ?",
+                (data_json, now, session_id),
+            )
+            if opening:
+                self._conn.execute(
+                    "INSERT INTO messages (session_id, role, content, created_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    (session_id, "assistant", opening, now),
+                )
 
     def load_state(
         self, session_id: str, character: CharacterSheet

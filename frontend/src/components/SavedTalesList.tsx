@@ -1,6 +1,6 @@
 import { type FormEvent, useState } from "react";
 
-import type { SessionSummary } from "../api";
+import type { SessionSummary } from "../api/types";
 
 interface SavedTalesListProps {
   sessions: SessionSummary[];

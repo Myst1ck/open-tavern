@@ -1,29 +1,35 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
-  type ActionKind,
-  type CharacterSheet,
-  createSession,
-  DEFAULT_DM_STYLE,
   deleteItem,
-  deleteSession,
-  type DmStyle,
   equipItem,
-  type GameState,
-  getSession,
-  getState,
-  type Item,
-  listSessions,
-  loadSettings,
-  renameSession,
-  saveSettings,
-  sendAction,
-  type Session,
-  type SessionSummary,
-  type TavernSettings,
   unequipItem,
   useItem as callUseItem,
-} from "./api";
+} from "./api/items";
+import {
+  createSession,
+  deleteSession,
+  getSession,
+  getState,
+  listSessions,
+  renameSession,
+} from "./api/sessions";
+import {
+  loadSettings,
+  saveSettings,
+  type TavernSettings,
+} from "./api/settings";
+import { DEFAULT_DM_STYLE } from "./api/style";
+import { sendAction } from "./api/turn";
+import {
+  type ActionKind,
+  type CharacterSheet,
+  type DmStyle,
+  type GameState,
+  type Item,
+  type Session,
+  type SessionSummary,
+} from "./api/types";
 import CharacterCreationView from "./components/CharacterCreationView";
 import CharacterSheetView from "./components/CharacterSheet";
 import Chat, { type Message } from "./components/Chat";
@@ -79,16 +85,25 @@ interface InventoryPanelProps {
  * subtree, not the whole play view (Chat, StateView, ...).
  */
 function InventoryPanel({ items, onItemClick }: InventoryPanelProps) {
-  const [hoveredItem, setHoveredItem] = useState<Item | null>(null);
+  const [hovered, setHovered] = useState<{
+    item: Item;
+    point?: { x: number; y: number };
+  } | null>(null);
   return (
     <>
       <InventoryGrid
         items={items}
         onItemClick={onItemClick}
-        onItemHover={setHoveredItem}
+        onItemHover={(item, point) =>
+          setHovered(item !== null ? { item, point } : null)
+        }
       />
-      {hoveredItem !== null && (
-        <ItemTooltip item={hoveredItem} visible={true} />
+      {hovered !== null && (
+        <ItemTooltip
+          item={hovered.item}
+          visible={true}
+          position={hovered.point}
+        />
       )}
     </>
   );
@@ -167,7 +182,9 @@ export default function App() {
 
   const handleItemAction = useCallback(
     async (action: string, item: Item) => {
-      if (!session || !character || itemBusy) return;
+      // ``busy`` too: an item mutation mid-turn would race the state snapshot
+      // the turn response is about to write.
+      if (!session || !character || busy || itemBusy) return;
       setItemBusy(true);
       try {
         const charId = session.session_id;
@@ -194,6 +211,9 @@ export default function App() {
           setCharacter(fresh.state.character);
           // Close only on success; a failed action keeps the modal open.
           setSelectedItem(null);
+        } else {
+          // A 200 with success: false still carries a reason; surface it.
+          setError(res.message !== "" ? res.message : "Item action failed");
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Item action failed");
@@ -201,7 +221,7 @@ export default function App() {
         setItemBusy(false);
       }
     },
-    [session, character, itemBusy],
+    [session, character, busy, itemBusy],
   );
 
   const handleSaveSettings = (next: TavernSettings) => {
@@ -261,6 +281,9 @@ export default function App() {
     if (session === null) {
       return;
     }
+    // Hold the busy flag across the load so a player turn cannot be sent (and
+    // then wiped by the persisted transcript) while it is still arriving.
+    setBusy(true);
     setCharacter(character);
     setPlayTab("campaign");
     setPhase("play");
@@ -281,8 +304,13 @@ export default function App() {
       // The backend already persists the AI opening as the first assistant
       // message; only fall back to a default line when no opening was saved.
       setMessages(persisted.length > 0 ? persisted : [fallback]);
-    } catch {
+    } catch (err) {
+      // The opening is persisted server-side; say so rather than silently
+      // showing a line the transcript does not contain.
       setMessages([fallback]);
+      setError(`Could not load the transcript: ${toMessage(err)}`);
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -315,7 +343,8 @@ export default function App() {
       }));
       setMessages(persisted);
       setPlayTab("campaign");
-      setPhase("play");
+      // A session without a character has no play view to land in.
+      setPhase(character !== null ? "play" : "character");
     } catch (err) {
       setError(toMessage(err));
     } finally {
@@ -354,7 +383,9 @@ export default function App() {
   };
 
   const handleSendAction = async (action: string, kind: ActionKind) => {
-    if (session === null || busy) {
+    // A turn sent while an item mutation is in flight would persist state
+    // computed before that mutation committed.
+    if (session === null || busy || itemBusy) {
       return;
     }
     setBusy(true);
@@ -438,6 +469,7 @@ export default function App() {
                 aria-label="Back to tales"
                 title="Back to tales"
                 onClick={handleBackToHome}
+                disabled={busy}
               >
                 ← Tales
               </button>
@@ -510,6 +542,7 @@ export default function App() {
             {selectedItem !== null && (
               <ItemModal
                 item={selectedItem}
+                busy={itemBusy}
                 onClose={() => setSelectedItem(null)}
                 onEquip={(item) => handleItemAction("equip", item)}
                 onUnequip={(item) => handleItemAction("unequip", item)}

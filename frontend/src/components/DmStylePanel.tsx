@@ -1,13 +1,8 @@
 import { useState } from "react";
 
-import {
-  type DmStyle,
-  type Tone,
-  TONE_OPTIONS,
-  updateSessionStyle,
-  type Verbosity,
-  VERBOSITY_OPTIONS,
-} from "../api";
+import { updateSessionStyle } from "../api/sessions";
+import { TONE_OPTIONS, VERBOSITY_OPTIONS } from "../api/style";
+import type { DmStyle, Tone, Verbosity } from "../api/types";
 
 export interface DmStyleFieldsProps {
   value: DmStyle;

@@ -16,13 +16,10 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
+import open_tavern.api.runtime as runtime
+from open_tavern.api.llm import get_client
 from open_tavern.api.main import create_app
-from open_tavern.api.routes import (
-    _SESSION_LOCKS,
-    _session_lock_ctx,
-    get_client,
-    get_storage,
-)
+from open_tavern.api.runtime import get_storage
 from open_tavern.character import normalize
 from open_tavern.storage import Storage
 
@@ -74,9 +71,9 @@ def test_delete_waits_for_inflight_action_and_cleans_lock(storage):
     client = _make_client(storage, FakeClient([]))
     session_id = _create_session(client)
 
-    with _session_lock_ctx(session_id):
+    with runtime.session_lock_ctx(session_id):
         # Simulate an inflight action holding the lock (refcount == 1).
-        assert _SESSION_LOCKS[session_id][1] == 1
+        assert runtime.SESSION_LOCKS[session_id][1] == 1
 
         result: dict = {}
         deleter = threading.Thread(
@@ -87,15 +84,17 @@ def test_delete_waits_for_inflight_action_and_cleans_lock(storage):
         deleter.start()
 
         # Delete thread must queue on the lock, not crash or pop the entry.
-        assert _wait_until(lambda: _SESSION_LOCKS.get(session_id, (None, 0))[1] == 2)
+        assert _wait_until(
+            lambda: runtime.SESSION_LOCKS.get(session_id, (None, 0))[1] == 2
+        )
         assert deleter.is_alive()
-        assert session_id in _SESSION_LOCKS
+        assert session_id in runtime.SESSION_LOCKS
 
     # Lock released: delete proceeds, refcount drops to zero, entry removed.
     deleter.join(timeout=5)
     assert not deleter.is_alive()
     assert result["status"] == 204
-    assert session_id not in _SESSION_LOCKS
+    assert session_id not in runtime.SESSION_LOCKS
     assert not storage.session_exists(session_id)
 
 
@@ -139,7 +138,7 @@ def test_concurrent_actions_and_delete_no_crash_no_deadlock(storage):
 
     assert not errors, f"threads raised: {errors}"
     assert all(not t.is_alive() for t in threads), "deadlock: thread(s) hung"
-    assert session_id not in _SESSION_LOCKS
+    assert session_id not in runtime.SESSION_LOCKS
     assert not storage.session_exists(session_id)
 
 

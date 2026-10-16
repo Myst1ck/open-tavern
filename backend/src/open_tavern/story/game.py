@@ -169,7 +169,10 @@ def _apply_actions(
                 damage = roll_expression(action.dice, rng=rng)
             except ValueError:
                 continue
-            state = apply_hp(state, -damage)
+            # A net-negative total (``1d6-100``) would otherwise heal: the
+            # delta below is negated before it reaches ``apply_hp``. Damage
+            # never restores HP — ``[HP:+n]`` is the healing tag.
+            state = apply_hp(state, -max(damage, 0))
         elif isinstance(action, HpAction):
             state = apply_hp(state, action.delta)
         elif isinstance(action, ItemAction):

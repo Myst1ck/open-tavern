@@ -1,6 +1,8 @@
 import { type FormEvent, useState } from "react";
 
-import { DEFAULT_DM_STYLE, type DmStyle, generateWorld } from "../api";
+import { DEFAULT_DM_STYLE } from "../api/style";
+import type { DmStyle } from "../api/types";
+import { generateWorld } from "../api/world";
 import { DmStyleFields } from "./DmStylePanel";
 
 export interface WorldGenViewProps {

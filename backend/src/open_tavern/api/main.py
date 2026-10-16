@@ -13,7 +13,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from open_tavern.api.routes import router
+from open_tavern.api.routes import ROUTERS
+from open_tavern.api.runtime import shutdown_runtime
 
 #: CORS origins used when ``OPEN_TAVERN_ALLOWED_ORIGINS`` is unset. Local-only
 #: default; the API is driven by the bundled frontend dev server (Vite, 5173).
@@ -34,8 +35,13 @@ def _allowed_origins() -> list[str]:
 
 @asynccontextmanager
 async def _lifespan(application: FastAPI):
-    """Application lifespan hook (no startup checks; kept for future use)."""
+    """Application lifespan hook.
+
+    Nothing to do on startup (the storage provider opens lazily); on shutdown
+    the runtime module releases its executor and database connection.
+    """
     yield
+    shutdown_runtime()
 
 
 def create_app() -> FastAPI:
@@ -56,7 +62,8 @@ def create_app() -> FastAPI:
             "X-Base-Url",
         ],
     )
-    application.include_router(router)
+    for router in ROUTERS:
+        application.include_router(router)
     return application
 
 

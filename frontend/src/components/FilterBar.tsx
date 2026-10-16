@@ -1,4 +1,4 @@
-import type { BaseType } from "../api";
+import type { BaseType } from "../api/types";
 
 export interface FilterState {
   type?: BaseType;

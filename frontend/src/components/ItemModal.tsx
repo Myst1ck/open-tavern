@@ -1,9 +1,11 @@
 import { useEffect, useRef } from "react";
 
-import type { Item } from "../api";
+import type { Item } from "../api/types";
 
 interface ItemModalProps {
   item: Item;
+  /** True while an item action is in flight; its buttons stay disabled. */
+  busy: boolean;
   onClose: () => void;
   onEquip: (item: Item) => void;
   onUnequip: (item: Item) => void;
@@ -13,6 +15,7 @@ interface ItemModalProps {
 
 export default function ItemModal({
   item,
+  busy,
   onClose,
   onEquip,
   onUnequip,
@@ -144,16 +147,20 @@ export default function ItemModal({
 
         <div className="modal-actions">
           {item.equipped ? (
-            <button onClick={() => onUnequip(item)} type="button">
+            <button
+              onClick={() => onUnequip(item)}
+              type="button"
+              disabled={busy}
+            >
               Unequip
             </button>
           ) : (
-            <button onClick={() => onEquip(item)} type="button">
+            <button onClick={() => onEquip(item)} type="button" disabled={busy}>
               Equip
             </button>
           )}
           {item.type === "consumable" ? (
-            <button onClick={() => onUse(item)} type="button">
+            <button onClick={() => onUse(item)} type="button" disabled={busy}>
               Use
             </button>
           ) : null}
@@ -161,6 +168,7 @@ export default function ItemModal({
             className="modal-drop-btn"
             onClick={() => onDrop(item)}
             type="button"
+            disabled={busy}
           >
             Drop
           </button>

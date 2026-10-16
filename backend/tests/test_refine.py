@@ -14,10 +14,11 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-import open_tavern.api.routes as routes_module
+from open_tavern.api import guards
+from open_tavern.api.llm import get_client
 from open_tavern.api.main import create_app
 from open_tavern.api.ratelimit import RateLimiter
-from open_tavern.api.routes import get_client, get_storage
+from open_tavern.api.runtime import get_storage
 from open_tavern.character import normalize
 from open_tavern.story.client import LLMClientError
 from open_tavern.story.prompts import refine_prose_prompt
@@ -272,7 +273,7 @@ def test_refine_prose_prompt_delimited_and_injection_guard():
 
 
 def test_refine_rate_limited_sixth_request_returns_429(storage, monkeypatch):
-    monkeypatch.setattr(routes_module, "_character_limiter", RateLimiter(5, 60.0))
+    monkeypatch.setattr(guards, "character_limiter", RateLimiter(5, 60.0))
     responses = [json.dumps(_sheet_with_prose_raw())]
     responses += [json.dumps(_refined_raw()) for _ in range(5)]
     fake = FakeClient(responses)

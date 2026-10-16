@@ -6,7 +6,7 @@ import random
 
 from open_tavern.character import normalize
 from open_tavern.dice import roll_expression
-from open_tavern.state import new_state
+from open_tavern.state import apply_hp, new_state
 from open_tavern.story import RollOutcome, TurnResult, turn
 from open_tavern.story.prompts import user_action_prompt
 from open_tavern.story.style import TONES, VERBOSITIES, DmStyle
@@ -67,6 +67,17 @@ def test_turn_no_check_applies_state_tags_without_second_call():
     assert result.llm_calls == 1
     assert result.state.current_hp == state.current_hp - 3
     assert any(item.name == "potion" for item in result.state.character.inventory)
+
+
+def test_turn_negative_damage_total_does_not_heal():
+    """A damage tag whose total is negative (``1d6-100``) must not restore HP."""
+    state = apply_hp(new_state(_character()), -5)
+    client = FakeClient(["Blood wells. [DAMAGE:1d6-100]"])
+
+    result = turn("I swing wildly", state, [], client, rng=random.Random(0))
+
+    assert result.llm_calls == 1
+    assert result.state.current_hp == state.current_hp
 
 
 # --- check: two calls, engine rolls -------------------------------------

@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from open_tavern.api.main import create_app
-from open_tavern.api.routes import get_storage
+from open_tavern.api.runtime import get_storage
 from open_tavern.storage import Storage
 
 
@@ -73,3 +73,19 @@ def test_x_forwarded_for_used_when_flag_on(storage, monkeypatch):
     )
 
     assert resp.status_code == 201
+
+
+def test_rate_limit_hits_before_session_existence_probe(storage):
+    client = _client(storage)
+    url = "/sessions/missing/characters/char-1/items"
+
+    # The item limiter is consumed even for unknown sessions, and exhaustion
+    # answers 429 instead of leaking a 404 existence oracle.
+    for _ in range(30):
+        resp = client.post(url, json={"name": "rock"})
+        assert resp.status_code == 404
+
+    resp = client.post(url, json={"name": "rock"})
+
+    assert resp.status_code == 429
+    assert resp.json()["detail"] == "rate limit exceeded"

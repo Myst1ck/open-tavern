@@ -120,7 +120,10 @@ class Item:
                 item_type = BaseType.loot
 
         try:
-            quantity = int(d.get("quantity", 1))
+            # Clamped like the numeric stats above: a negative count would
+            # invert the decrement-on-use / delete-at-zero invariant and render
+            # as garbage in the inventory UI.
+            quantity = max(0, int(d.get("quantity", 1)))
         except (TypeError, ValueError):
             quantity = 1
 

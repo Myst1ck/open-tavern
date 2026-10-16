@@ -2,7 +2,7 @@ import { type FormEvent, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { Virtuoso } from "react-virtuoso";
 
-import { type ActionKind, type RollOutcome } from "../api";
+import type { ActionKind, RollOutcome } from "../api/types";
 
 export interface Message {
   id: string;
