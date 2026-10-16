@@ -39,9 +39,18 @@ export async function parseSseStream(
   for (;;) {
     const { done, value } = await reader.read();
     if (done) {
+      // No further chunk can complete a CRLF pair: normalize the remainder.
+      buffer = buffer.replace(/\r\n?/g, "\n");
       break;
     }
-    buffer += decoder.decode(value, { stream: true }).replace(/\r\n?/g, "\n");
+    buffer += decoder.decode(value, { stream: true });
+    // Normalize CRLF and bare CR to LF — except a trailing CR, which may be
+    // the first half of a CRLF pair completed by the next chunk; rewriting it
+    // now would forge a false "\n\n" frame boundary.
+    const pendingCr = buffer.endsWith("\r");
+    buffer =
+      (pendingCr ? buffer.slice(0, -1) : buffer).replace(/\r\n?/g, "\n") +
+      (pendingCr ? "\r" : "");
     let boundary = buffer.indexOf("\n\n");
     while (boundary !== -1) {
       const frame = parseFrame(buffer.slice(0, boundary));
