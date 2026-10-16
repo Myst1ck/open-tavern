@@ -2,21 +2,19 @@ import { type FormEvent, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { Virtuoso } from "react-virtuoso";
 
-import type { ActionKind, RollOutcome } from "../api/types";
-
-export interface Message {
-  id: string;
-  role: "player" | "gm";
-  content: string;
-  rolls: RollOutcome[];
-  kind?: ActionKind;
-}
+import type { ActionKind } from "../api/types";
+import type { RollSetEntry, TranscriptEntry } from "../transcript";
+import RollCard from "./RollCard";
 
 interface ChatProps {
-  messages: Message[];
+  /** Transcript entries in order: narration bubbles and d20 roll sets. */
+  entries: TranscriptEntry[];
   busy: boolean;
   error: string | null;
   onSend: (action: string, kind: ActionKind) => void;
+  /** Roll cards already revealed in the active set (0 = only the first is up). */
+  revealCount: number;
+  onRollRevealed: (rollSetId: string, index: number) => void;
 }
 
 const MODE_STORAGE_KEY = "tavern.action-mode";
@@ -43,7 +41,14 @@ function readStoredMode(): ActionKind {
     : "act";
 }
 
-export default function Chat({ messages, busy, error, onSend }: ChatProps) {
+export default function Chat({
+  entries,
+  busy,
+  error,
+  onSend,
+  revealCount,
+  onRollRevealed,
+}: ChatProps) {
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<ActionKind>(readStoredMode);
 
@@ -82,18 +87,26 @@ export default function Chat({ messages, busy, error, onSend }: ChatProps) {
 
   return (
     <section className="panel chat-panel">
-      {messages.length === 0 ? (
+      {entries.length === 0 ? (
         <p className="chat-empty muted">The tavern is quiet. What do you do?</p>
       ) : (
         <Virtuoso
           className="chat-list"
-          data={messages}
+          data={entries}
           followOutput="smooth"
-          initialTopMostItemIndex={Math.max(0, messages.length - 1)}
-          computeItemKey={(_index, message) => message.id}
-          itemContent={(_index, message) => (
+          initialTopMostItemIndex={Math.max(0, entries.length - 1)}
+          computeItemKey={(_index, entry) => entry.id}
+          itemContent={(_index, entry) => (
             <div className="chat-row">
-              <MessageBubble message={message} />
+              {entry.kind === "message" ? (
+                <MessageBubble entry={entry} />
+              ) : (
+                <RollSetBlock
+                  entry={entry}
+                  revealCount={revealCount}
+                  onRevealed={onRollRevealed}
+                />
+              )}
             </div>
           )}
         />
@@ -142,16 +155,19 @@ export default function Chat({ messages, busy, error, onSend }: ChatProps) {
   );
 }
 
-function MessageBubble({ message }: { message: Message }) {
+/** A narration bubble: the player's action or the GM's reply. */
+type MessageEntry = Extract<TranscriptEntry, { kind: "message" }>;
+
+function MessageBubble({ entry }: { entry: MessageEntry }) {
+  const isPlayer = entry.role === "user";
   // Player continue turns (and any empty player body) collapse to a muted
   // placeholder; GM narration never uses it.
   const isPlaceholder =
-    message.role === "player" &&
-    (message.kind === "continue" || message.content === "");
+    isPlayer && (entry.actionKind === "continue" || entry.content === "");
   const className = [
     "chat-message",
-    message.role,
-    message.kind === "say" ? "say" : null,
+    isPlayer ? "player" : "gm",
+    entry.actionKind === "say" ? "say" : null,
     isPlaceholder ? "placeholder" : null,
   ]
     .filter((part) => part !== null)
@@ -159,46 +175,44 @@ function MessageBubble({ message }: { message: Message }) {
 
   return (
     <div className={className}>
-      <span className="chat-author">
-        {message.role === "player" ? "You" : "The Tavern"}
-      </span>
+      <span className="chat-author">{isPlayer ? "You" : "The Tavern"}</span>
       {isPlaceholder ? (
         <p className="chat-placeholder">— scene continues —</p>
       ) : (
         <div className="chat-prose">
-          <ReactMarkdown>{message.content}</ReactMarkdown>
+          <ReactMarkdown>{entry.content}</ReactMarkdown>
         </div>
       )}
-      {message.rolls.length > 0 && <RollsDisplay rolls={message.rolls} />}
     </div>
   );
 }
 
-function RollsDisplay({ rolls }: { rolls: RollOutcome[] }) {
+interface RollSetBlockProps {
+  entry: RollSetEntry;
+  revealCount: number;
+  onRevealed: (rollSetId: string, index: number) => void;
+}
+
+/**
+ * Mounts cards one at a time so each die starts tumbling only once the previous
+ * one has revealed — RollCard starts its own timer on mount. Revealed sets
+ * (resumed transcripts) mount everything at once, already revealed.
+ */
+function RollSetBlock({ entry, revealCount, onRevealed }: RollSetBlockProps) {
+  const mounted =
+    entry.state === "pending"
+      ? Math.min(revealCount + 1, entry.rolls.length)
+      : entry.rolls.length;
   return (
-    <ul className="rolls">
-      {rolls.map((roll, index) => {
-        const mod =
-          roll.modifier >= 0
-            ? `+ ${roll.modifier}`
-            : `- ${Math.abs(roll.modifier)}`;
-        const result = roll.crit_success
-          ? " CRITICAL SUCCESS"
-          : roll.crit_fail
-            ? " CRITICAL FAILURE"
-            : roll.success
-              ? " SUCCESS"
-              : " FAILURE";
-        return (
-          <li
-            key={`${roll.name}-${index}`}
-            className={roll.success ? "roll-success" : "roll-fail"}
-          >
-            {roll.name}: d20 {roll.d20} ({mod}) = {roll.total}
-            {result}
-          </li>
-        );
-      })}
-    </ul>
+    <div className="roll-set">
+      {entry.rolls.slice(0, mounted).map((roll, index) => (
+        <RollCard
+          key={`${entry.id}-${index}`}
+          roll={roll}
+          initialRevealed={entry.state === "revealed"}
+          onRevealed={() => onRevealed(entry.id, index)}
+        />
+      ))}
+    </div>
   );
 }

@@ -19,6 +19,7 @@ from uuid import uuid4
 from open_tavern.character import CharacterSheet, normalize
 from open_tavern.character.items import BaseType, Item
 from open_tavern.state import GameState, state_from_persistable, state_to_persistable
+from open_tavern.story.game import RollOutcome
 from open_tavern.story.style import DmStyle, normalize_dm_style
 
 #: Current schema version, tracked in the ``meta`` table.
@@ -30,7 +31,9 @@ from open_tavern.story.style import DmStyle, normalize_dm_style
 #:   * 3 — adds the ``items`` table.
 #:   * 4 — adds session metadata columns (``premise``, ``title``,
 #:     ``updated_at``, ``state_json``).
-#:   * 5 — adds the ``dm_style_json`` session column (DM narration style).
+#:   * 5 — adds the ``messages.rolls_json`` column (resolved check rolls
+#:     persisted with the assistant narration) and the ``dm_style_json``
+#:     session column (DM narration style).
 #:
 #: Older databases are migrated forward step by step (see ``_MIGRATIONS``);
 #: databases from a newer build are refused, never dropped.
@@ -53,7 +56,6 @@ class SchemaCorruptError(RuntimeError):
     error), and rebuilding the schema would discard data written by a format
     this build does not understand.
     """
-
 #: ``meta`` row key holding the schema version written by :meth:`Storage.init`.
 _SCHEMA_VERSION_KEY: str = "schema_version"
 
@@ -110,7 +112,8 @@ CREATE TABLE IF NOT EXISTS messages (
     session_id TEXT NOT NULL,
     role TEXT NOT NULL,
     content TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    rolls_json TEXT
 );
 
 {_ITEMS_SCHEMA}
@@ -137,6 +140,22 @@ def _add_session_columns(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE sessions ADD COLUMN {ddl}")
 
 
+def _add_message_rolls_column(conn: sqlite3.Connection) -> None:
+    """Add the schema-v5 ``messages.rolls_json`` column (idempotent).
+
+    ``ALTER TABLE ADD COLUMN`` fails if the column already exists, so it is
+    added only when missing. A database without a ``messages`` table has
+    nothing to migrate — ``_SCHEMA`` creates that table in full. The column is
+    nullable: ``NULL`` marks messages saved before rolls were persisted.
+    """
+    present = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'messages'"
+    ).fetchone()
+    if present is None:
+        return
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(messages)")}
+    if "rolls_json" not in existing:
+        conn.execute("ALTER TABLE messages ADD COLUMN rolls_json TEXT")
 def _add_dm_style_column(conn: sqlite3.Connection) -> None:
     """Add the schema-v5 ``dm_style_json`` session column (idempotent).
 
@@ -157,6 +176,7 @@ _MIGRATIONS: list[tuple[int, str | Callable[[sqlite3.Connection], None]]] = [
     (2, _META_SCHEMA),  # 1 -> 2: version tracking
     (3, _ITEMS_SCHEMA),  # 2 -> 3: items table
     (4, _add_session_columns),  # 3 -> 4: session metadata columns
+    (5, _add_message_rolls_column),  # 4 -> 5: persisted check rolls column
     (5, _add_dm_style_column),  # 4 -> 5: DM narration style column
 ]
 
@@ -402,6 +422,7 @@ class Storage:
         state: GameState,
         user_message: str,
         assistant_message: str,
+        rolls: tuple[RollOutcome, ...] = (),
     ) -> None:
         """Persist one completed turn atomically.
 
@@ -410,8 +431,14 @@ class Storage:
         writes can never leave the state and the transcript diverging (e.g.
         state advanced while the player's message was lost). Bumps
         ``updated_at`` like :meth:`save_state`.
+
+        ``rolls`` are the check outcomes resolved for this turn; when
+        non-empty they are stored as JSON on the assistant message row so a
+        reloaded transcript can replay the results. Turns without checks
+        store ``NULL``.
         """
         data_json = json.dumps(state_to_persistable(state))
+        rolls_json = json.dumps([asdict(roll) for roll in rolls]) if rolls else None
         now = _now_iso()
         with self._lock, self._conn:
             self._conn.execute(
@@ -424,9 +451,10 @@ class Storage:
                 (session_id, "user", user_message, now),
             )
             self._conn.execute(
-                "INSERT INTO messages (session_id, role, content, created_at) "
-                "VALUES (?, ?, ?, ?)",
-                (session_id, "assistant", assistant_message, now),
+                "INSERT INTO messages "
+                "(session_id, role, content, created_at, rolls_json) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (session_id, "assistant", assistant_message, now, rolls_json),
             )
 
     def save_opening(
@@ -586,16 +614,26 @@ class Storage:
         unbounded read of the whole transcript. The window size is bounded by
         :data:`MESSAGE_LOAD_LIMIT` (default 500); adjust that module constant
         to change the limit — the signature stays stable.
+
+        Assistant messages carry a ``rolls`` key: the check outcomes persisted
+        with that narration (``[]`` for rows saved before rolls were stored or
+        for turns without checks). Player messages keep the two-key shape.
         """
         with self._lock:
             rows = self._conn.execute(
-                "SELECT role, content FROM messages "
+                "SELECT role, content, rolls_json FROM messages "
                 "WHERE session_id = ? ORDER BY id DESC LIMIT ?",
                 (session_id, MESSAGE_LOAD_LIMIT),
             ).fetchall()
-        return [
-            {"role": row["role"], "content": row["content"]} for row in reversed(rows)
-        ]
+        messages: list[dict] = []
+        for row in reversed(rows):
+            message = {"role": row["role"], "content": row["content"]}
+            if row["role"] == "assistant":
+                message["rolls"] = (
+                    json.loads(row["rolls_json"]) if row["rolls_json"] else []
+                )
+            messages.append(message)
+        return messages
 
     def session_exists(self, session_id: str) -> bool:
         """Return ``True`` if a session row with ``session_id`` exists.

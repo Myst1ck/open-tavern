@@ -34,11 +34,23 @@ export class ApiError extends Error {
   }
 }
 
-export async function request<T>(
+/** Shown when the total request budget elapses before a response arrives. */
+const TIMEOUT_MESSAGE =
+  "Request timed out — the storyteller took too long. Try again.";
+
+/**
+ * Shared request preamble for buffered and streaming calls. Sends the request
+ * with the settings headers, turns a non-OK response into an `ApiError` carrying
+ * the backend's `detail`, and hands the caller the abort `signal` and the timer
+ * so the budget covers the whole call — a buffered caller clears the timer after
+ * parsing the body, a streaming caller only after the stream finishes. Callers
+ * MUST `clearTimeout(timer)` when done.
+ */
+export async function prepareRequest(
   path: string,
   init: RequestInit = {},
   timeoutMs: number = REQUEST_TIMEOUT_MS,
-): Promise<T> {
+): Promise<{ response: Response; timer: number; signal: AbortSignal }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -54,18 +66,38 @@ export async function request<T>(
     if (!response.ok) {
       throw new ApiError(response.status, await errorDetail(response));
     }
+    return { response, timer, signal: controller.signal };
+  } catch (err) {
+    clearTimeout(timer);
+    // The timer aborts the fetch; surface a readable message instead of the
+    // raw DOMException text ("signal is aborted without reason").
+    if (controller.signal.aborted) {
+      throw new ApiError(0, TIMEOUT_MESSAGE);
+    }
+    throw err;
+  }
+}
+
+export async function request<T>(
+  path: string,
+  init: RequestInit = {},
+  timeoutMs: number = REQUEST_TIMEOUT_MS,
+): Promise<T> {
+  const { response, timer, signal } = await prepareRequest(
+    path,
+    init,
+    timeoutMs,
+  );
+  try {
     if (response.status === 204) {
       return undefined as T;
     }
     return (await response.json()) as T;
   } catch (err) {
-    // The timer aborts the fetch; surface a readable message instead of the
+    // The timer aborts the request; surface a readable message instead of the
     // raw DOMException text ("signal is aborted without reason").
-    if (controller.signal.aborted) {
-      throw new ApiError(
-        0,
-        "Request timed out — the storyteller took too long. Try again.",
-      );
+    if (signal.aborted) {
+      throw new ApiError(0, TIMEOUT_MESSAGE);
     }
     throw err;
   } finally {

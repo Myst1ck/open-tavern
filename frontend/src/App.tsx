@@ -20,10 +20,10 @@ import {
   type TavernSettings,
 } from "./api/settings";
 import { DEFAULT_DM_STYLE } from "./api/style";
-import { sendAction } from "./api/turn";
 import {
   type ActionKind,
   type CharacterSheet,
+  type ChatMessage,
   type DmStyle,
   type GameState,
   type Item,
@@ -32,7 +32,7 @@ import {
 } from "./api/types";
 import CharacterCreationView from "./components/CharacterCreationView";
 import CharacterSheetView from "./components/CharacterSheet";
-import Chat, { type Message } from "./components/Chat";
+import Chat from "./components/Chat";
 import CreateTaleCard from "./components/CreateTaleCard";
 import DmStylePanel from "./components/DmStylePanel";
 import FilterBar, { type FilterState } from "./components/FilterBar";
@@ -46,6 +46,8 @@ import SettingsPanel from "./components/SettingsPanel";
 import StateView from "./components/StateView";
 import UpdateToast from "./components/UpdateToast";
 import WorldGenView from "./components/WorldGenView";
+import { newEntryId, type TranscriptEntry } from "./transcript";
+import { useTurnStream } from "./useTurnStream";
 
 type Phase = "home" | "worldgen" | "character" | "play";
 
@@ -53,19 +55,29 @@ function toMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function newId(): string {
-  if (
-    typeof crypto !== "undefined" &&
-    typeof crypto.randomUUID === "function"
-  ) {
-    return crypto.randomUUID();
+/**
+ * Map the persisted transcript onto UI entries: an assistant turn's saved rolls
+ * become a static, already-revealed roll set placed before its narration.
+ */
+function toTranscriptEntries(messages: ChatMessage[]): TranscriptEntry[] {
+  const entries: TranscriptEntry[] = [];
+  for (const message of messages) {
+    if (message.rolls !== undefined && message.rolls.length > 0) {
+      entries.push({
+        kind: "roll-set",
+        id: newEntryId(),
+        rolls: message.rolls,
+        state: "revealed",
+      });
+    }
+    entries.push({
+      kind: "message",
+      id: newEntryId(),
+      role: message.role,
+      content: message.content,
+    });
   }
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-}
-
-/** Backend persists transcript roles as "user"/"assistant"; normalize for the UI. */
-function toUiRole(role: string): "player" | "gm" {
-  return role === "user" || role === "player" ? "player" : "gm";
+  return entries;
 }
 
 /** Guard: a resumed session without a character arrives as an empty object. */
@@ -115,7 +127,7 @@ export default function App() {
   const [dmStyle, setDmStyle] = useState<DmStyle>(DEFAULT_DM_STYLE);
   const [character, setCharacter] = useState<CharacterSheet | null>(null);
   const [state, setState] = useState<GameState | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [entries, setEntries] = useState<TranscriptEntry[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [settings, setSettings] = useState<TavernSettings>(loadSettings);
@@ -129,6 +141,18 @@ export default function App() {
   const [selectedItem, setSelectedItem] = useState<Item | null>(null);
   const [itemBusy, setItemBusy] = useState(false);
   const [playTab, setPlayTab] = useState<PlayTabId>("campaign");
+
+  const handleTurnComplete = useCallback((next: GameState) => {
+    setState(next);
+    setCharacter(next.character);
+  }, []);
+
+  const turn = useTurnStream({
+    setEntries,
+    setBusy,
+    setError,
+    onTurnComplete: handleTurnComplete,
+  });
 
   const refreshSessions = async () => {
     setSessionsBusy(true);
@@ -247,7 +271,7 @@ export default function App() {
       // A fresh session resets any character progress from a prior world.
       setCharacter(null);
       setState(null);
-      setMessages([]);
+      setEntries([]);
       setDmStyle(style);
       setPhase("character");
     } catch (err) {
@@ -262,7 +286,7 @@ export default function App() {
     setSession(null);
     setCharacter(null);
     setState(null);
-    setMessages([]);
+    setEntries([]);
     setError(null);
     setPhase("worldgen");
   };
@@ -272,7 +296,7 @@ export default function App() {
     setSession(null);
     setCharacter(null);
     setState(null);
-    setMessages([]);
+    setEntries([]);
     setError(null);
     setPhase("home");
   };
@@ -287,27 +311,22 @@ export default function App() {
     setCharacter(character);
     setPlayTab("campaign");
     setPhase("play");
-    const fallback: Message = {
-      id: newId(),
-      role: "gm",
+    const fallback: TranscriptEntry = {
+      kind: "message",
+      id: newEntryId(),
+      role: "assistant",
       content: `The door creaks open. You are ${character.name}, and a story in ${session.world_theme} begins.`,
-      rolls: [],
     };
     try {
       const detail = await getSession(session.session_id);
-      const persisted: Message[] = detail.messages.map((message) => ({
-        id: newId(),
-        role: toUiRole(message.role),
-        content: message.content,
-        rolls: [],
-      }));
+      const persisted = toTranscriptEntries(detail.messages);
       // The backend already persists the AI opening as the first assistant
       // message; only fall back to a default line when no opening was saved.
-      setMessages(persisted.length > 0 ? persisted : [fallback]);
+      setEntries(persisted.length > 0 ? persisted : [fallback]);
     } catch (err) {
       // The opening is persisted server-side; say so rather than silently
       // showing a line the transcript does not contain.
-      setMessages([fallback]);
+      setEntries([fallback]);
       setError(`Could not load the transcript: ${toMessage(err)}`);
     } finally {
       setBusy(false);
@@ -334,14 +353,9 @@ export default function App() {
       setState(character !== null ? detail.state : null);
       setDmStyle(detail.dm_style ?? DEFAULT_DM_STYLE);
       // Persisted transcript as-is; the AI opening is already the first
-      // assistant message. No synthetic intro is injected here.
-      const persisted: Message[] = detail.messages.map((message) => ({
-        id: newId(),
-        role: toUiRole(message.role),
-        content: message.content,
-        rolls: [],
-      }));
-      setMessages(persisted);
+      // assistant message. No synthetic intro is injected here. Saved turn
+      // rolls come back as static, already-revealed roll sets.
+      setEntries(toTranscriptEntries(detail.messages));
       setPlayTab("campaign");
       // A session without a character has no play view to land in.
       setPhase(character !== null ? "play" : "character");
@@ -371,52 +385,32 @@ export default function App() {
   };
 
   const handleBackToHome = () => {
-    // State already saved server-side on every action; just leave play.
+    // State already saved server-side on every action; just leave play. An
+    // in-flight turn (e.g. mid-reveal) is abandoned, not awaited.
+    turn.reset();
     setSession(null);
     setCharacter(null);
     setState(null);
-    setMessages([]);
+    setEntries([]);
     setError(null);
     setPlayTab("campaign");
     setPhase("home");
     void refreshSessions();
   };
 
-  const handleSendAction = async (action: string, kind: ActionKind) => {
+  /**
+   * Hand one player turn to the stream driver: it appends the optimistic player
+   * entry, renders the streamed roll set, and reveals the buffered narration
+   * once every card has landed. The `kind` frames the action for the backend and
+   * styles the player bubble.
+   */
+  const handleSendAction = (action: string, kind: ActionKind) => {
     // A turn sent while an item mutation is in flight would persist state
     // computed before that mutation committed.
     if (session === null || busy || itemBusy) {
       return;
     }
-    setBusy(true);
-    setError(null);
-    const playerMessage: Message = {
-      id: newId(),
-      role: "player",
-      content: kind === "continue" ? "" : action,
-      rolls: [],
-      kind,
-    };
-    setMessages((prev) => [...prev, playerMessage]);
-    try {
-      const response = await sendAction(session.session_id, action, kind);
-      const gmMessage: Message = {
-        id: newId(),
-        role: "gm",
-        content: response.narration,
-        rolls: response.rolls,
-      };
-      setMessages((prev) => [...prev, gmMessage]);
-      setState(response.state);
-      setCharacter(response.state.character);
-    } catch (err) {
-      // Roll back the optimistic player message so a failed action does not
-      // leave a dangling turn in the transcript.
-      setMessages((prev) => prev.filter((m) => m.id !== playerMessage.id));
-      setError(toMessage(err));
-    } finally {
-      setBusy(false);
-    }
+    turn.send(session.session_id, action, kind);
   };
 
   return (
@@ -485,10 +479,12 @@ export default function App() {
                 aria-labelledby="play-tab-campaign"
               >
                 <Chat
-                  messages={messages}
+                  entries={entries}
                   busy={busy}
                   error={error}
                   onSend={handleSendAction}
+                  revealCount={turn.revealCount}
+                  onRollRevealed={turn.onRollRevealed}
                 />
               </div>
               {playTab === "character" && (

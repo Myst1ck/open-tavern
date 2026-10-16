@@ -77,6 +77,23 @@ def _make_client(storage: Storage, fake: FakeClient) -> TestClient:
     return TestClient(app)
 
 
+def _parse_sse(body: str) -> list[tuple[str, dict]]:
+    """Split a materialized SSE body into ``(event, data)`` frames.
+
+    The actions endpoint streams ``event: <name>\\ndata: <json>\\n\\n`` frames;
+    ``TestClient`` materializes the whole body, so tests parse it here.
+    """
+    frames: list[tuple[str, dict]] = []
+    event: str | None = None
+    for line in body.splitlines():
+        if line.startswith("event:"):
+            event = line[len("event:") :].strip()
+        elif line.startswith("data:"):
+            frames.append((event, json.loads(line[len("data:") :].strip())))
+            event = None
+    return frames
+
+
 @pytest.fixture
 def storage() -> Storage:
     store = Storage(":memory:")
@@ -174,7 +191,11 @@ def test_get_session_resume_bundle(storage):
     assert data["state"]["character"]["name"] == "Thorn"
     assert data["character"]["name"] == "Thorn"
     assert {"role": "user", "content": "attack"} in data["messages"]
-    assert {"role": "assistant", "content": "You strike true."} in data["messages"]
+    assert {
+        "role": "assistant",
+        "content": "You strike true.",
+        "rolls": [],
+    } in data["messages"]
 
 
 def test_get_session_unknown_404(storage):
@@ -197,7 +218,7 @@ def test_get_session_messages(storage):
     assert resp.status_code == 200
     assert resp.json() == [
         {"role": "user", "content": "attack"},
-        {"role": "assistant", "content": "Boom."},
+        {"role": "assistant", "content": "Boom.", "rolls": []},
     ]
 
 
@@ -343,14 +364,61 @@ def test_send_action_returns_narration_state_and_persists(storage):
     )
 
     assert resp.status_code == 200
-    data = resp.json()
+    assert resp.headers["content-type"].startswith("text/event-stream")
+
+    frames = _parse_sse(resp.text)
+    # The fake narration carries no CHECK tag, so the turn resolves no roll:
+    # the contract emits no ``roll`` frame and a single terminal ``message``.
+    assert [name for name, _ in frames] == ["message"]
+    event, data = frames[0]
+    assert event == "message"
     assert data["narration"] == "You strike true."
     assert data["rolls"] == []
     assert data["state"]["character"]["name"] == "Thorn"
 
     messages = storage.load_messages(session_id)
     assert {"role": "user", "content": "attack the goblin"} in messages
-    assert {"role": "assistant", "content": "You strike true."} in messages
+    assert {
+        "role": "assistant",
+        "content": "You strike true.",
+        "rolls": [],
+    } in messages
+
+
+def test_send_action_streams_roll_frame_before_message(storage):
+    """A check-triggering turn streams a ``roll`` frame then the ``message``."""
+    client = _make_client(
+        storage,
+        FakeClient(
+            [
+                json.dumps(_valid_sheet_raw()),
+                "You swing at the goblin. [CHECK:strength DC12]",
+                "You strike true.",
+            ]
+        ),
+    )
+    session_id = storage.create_session("gothic")
+    client.post(f"/sessions/{session_id}/character", json={"description": "elf"})
+
+    resp = client.post(
+        f"/sessions/{session_id}/actions",
+        json={"action": "attack the goblin"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/event-stream")
+
+    frames = _parse_sse(resp.text)
+    # The resolved roll streams first; ``message`` is the terminal frame.
+    assert [name for name, _ in frames] == ["roll", "message"]
+    roll_frame = frames[0][1]
+    message = frames[1][1]
+    # The d20 is unseeded, so pin the roll by name + DC and the follow-up text.
+    assert [roll["name"] for roll in roll_frame["rolls"]] == ["strength"]
+    assert [roll["dc"] for roll in roll_frame["rolls"]] == [12]
+    assert message["narration"] == "You strike true."
+    assert [roll["name"] for roll in message["rolls"]] == ["strength"]
+    assert [roll["dc"] for roll in message["rolls"]] == [12]
 
 
 # --- state ---------------------------------------------------------------
@@ -768,7 +836,7 @@ def test_create_character_returns_opening_and_goals_quests(storage):
 
     # Opening seeded as first assistant message (non-empty only).
     assert storage.load_messages(session_id) == [
-        {"role": "assistant", "content": expected_opening}
+        {"role": "assistant", "content": expected_opening, "rolls": []}
     ]
 
     # Goals/quests/hit_die/class_description persist on the reconstructed sheet.

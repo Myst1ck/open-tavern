@@ -32,10 +32,16 @@ export interface SessionSummary {
   character_name: string | null;
 }
 
-/** Persisted chat transcript entry (role/content only, no UI state). */
+/** Persisted chat transcript entry (role/content, plus turn rolls if any). */
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+  /**
+   * Check outcomes persisted with an assistant narration. Absent on player
+   * messages and on rows saved before rolls were stored; `[]` when the turn
+   * resolved no checks.
+   */
+  rolls?: RollOutcome[];
 }
 
 export interface SessionDetail {
