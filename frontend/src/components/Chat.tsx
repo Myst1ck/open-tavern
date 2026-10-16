@@ -1,22 +1,26 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
 
-import type { RollOutcome } from "../api";
-
-export interface Message {
-  id: string;
-  role: "player" | "gm";
-  content: string;
-  rolls: RollOutcome[];
-}
+import type { RollSetEntry, TranscriptEntry } from "../transcript";
+import RollCard from "./RollCard";
 
 interface ChatProps {
-  messages: Message[];
+  entries: TranscriptEntry[];
   busy: boolean;
   error: string | null;
   onSend: (action: string) => void;
+  /** Roll cards already revealed in the active set (0 = only the first is up). */
+  revealCount: number;
+  onRollRevealed: (rollSetId: string, index: number) => void;
 }
 
-export default function Chat({ messages, busy, error, onSend }: ChatProps) {
+export default function Chat({
+  entries,
+  busy,
+  error,
+  onSend,
+  revealCount,
+  onRollRevealed,
+}: ChatProps) {
   const [input, setInput] = useState("");
   const listRef = useRef<HTMLDivElement | null>(null);
 
@@ -25,7 +29,7 @@ export default function Chat({ messages, busy, error, onSend }: ChatProps) {
     if (element !== null) {
       element.scrollTop = element.scrollHeight;
     }
-  }, [messages]);
+  }, [entries, revealCount]);
 
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
@@ -40,20 +44,31 @@ export default function Chat({ messages, busy, error, onSend }: ChatProps) {
   return (
     <section className="panel chat-panel">
       <div className="chat-list" ref={listRef}>
-        {messages.length === 0 && (
+        {entries.length === 0 && (
           <p className="chat-empty muted">
             The tavern is quiet. What do you do?
           </p>
         )}
-        {messages.map((message) => (
-          <div key={message.id} className={`chat-message ${message.role}`}>
-            <span className="chat-author">
-              {message.role === "player" ? "You" : "The Tavern"}
-            </span>
-            <p>{message.content}</p>
-            {message.rolls.length > 0 && <RollsDisplay rolls={message.rolls} />}
-          </div>
-        ))}
+        {entries.map((entry) =>
+          entry.kind === "message" ? (
+            <div
+              key={entry.id}
+              className={`chat-message ${entry.role === "user" ? "player" : "gm"}`}
+            >
+              <span className="chat-author">
+                {entry.role === "user" ? "You" : "The Tavern"}
+              </span>
+              <p>{entry.content}</p>
+            </div>
+          ) : (
+            <RollSetBlock
+              key={entry.id}
+              entry={entry}
+              revealCount={revealCount}
+              onRevealed={onRollRevealed}
+            />
+          ),
+        )}
       </div>
       {error !== null && <p className="error chat-error">{error}</p>}
       <form className="chat-form" onSubmit={handleSubmit}>
@@ -72,31 +87,32 @@ export default function Chat({ messages, busy, error, onSend }: ChatProps) {
   );
 }
 
-function RollsDisplay({ rolls }: { rolls: RollOutcome[] }) {
+interface RollSetBlockProps {
+  entry: RollSetEntry;
+  revealCount: number;
+  onRevealed: (rollSetId: string, index: number) => void;
+}
+
+/**
+ * Mounts cards one at a time so each die starts tumbling only once the previous
+ * one has revealed — RollCard starts its own timer on mount. Revealed sets
+ * (resumed transcripts) mount everything at once, already revealed.
+ */
+function RollSetBlock({ entry, revealCount, onRevealed }: RollSetBlockProps) {
+  const mounted =
+    entry.state === "pending"
+      ? Math.min(revealCount + 1, entry.rolls.length)
+      : entry.rolls.length;
   return (
-    <ul className="rolls">
-      {rolls.map((roll, index) => {
-        const mod =
-          roll.modifier >= 0
-            ? `+ ${roll.modifier}`
-            : `- ${Math.abs(roll.modifier)}`;
-        const result = roll.crit_success
-          ? " CRITICAL SUCCESS"
-          : roll.crit_fail
-            ? " CRITICAL FAILURE"
-            : roll.success
-              ? " SUCCESS"
-              : " FAILURE";
-        return (
-          <li
-            key={`${roll.name}-${index}`}
-            className={roll.success ? "roll-success" : "roll-fail"}
-          >
-            {roll.name}: d20 {roll.d20} ({mod}) = {roll.total}
-            {result}
-          </li>
-        );
-      })}
-    </ul>
+    <div className="roll-set">
+      {entry.rolls.slice(0, mounted).map((roll, index) => (
+        <RollCard
+          key={`${entry.id}-${index}`}
+          roll={roll}
+          initialRevealed={entry.state === "revealed"}
+          onRevealed={() => onRevealed(entry.id, index)}
+        />
+      ))}
+    </div>
   );
 }

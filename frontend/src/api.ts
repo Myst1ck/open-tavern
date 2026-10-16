@@ -6,6 +6,8 @@
  * every call is a direct fetch against the backend.
  */
 
+import { parseSseStream } from "./sse";
+
 // API calls are same-origin. When the app is served under a subpath (e.g.
 // /tavern/ via tailscale serve), Vite's BASE_URL carries that prefix, so
 // absolute paths like /world/generate become /tavern/world/generate.
@@ -103,10 +105,11 @@ export interface SessionSummary {
   character_name: string | null;
 }
 
-/** Persisted chat transcript entry (role/content only, no UI state). */
+/** Persisted chat transcript entry (role/content, plus turn rolls if any). */
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+  rolls?: RollOutcome[];
 }
 
 /** Alias for chat-message payloads sent to the backend. */
@@ -238,11 +241,28 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(
+/**
+ * Handle returned by `setTimeout`; Node and the DOM disagree on the concrete
+ * type, so name the inferred one here instead of leaking `ReturnType`.
+ */
+type TimeoutHandle = ReturnType<typeof setTimeout>;
+
+/**
+ * Shared request preamble for both buffered and streaming calls. Sends the
+ * request with the settings headers, aborts it once the total `timeoutMs`
+ * budget elapses, and turns a non-OK response into an `ApiError` carrying the
+ * backend's `detail` — so pre-stream failures keep today's semantics.
+ *
+ * The timeout timer stays armed for as long as the caller holds the returned
+ * handle: buffered callers clear it after parsing the body, streaming callers
+ * only after the whole stream finishes (the budget covers the entire stream,
+ * not each frame). Callers MUST `clearTimeout(timer)` when done.
+ */
+async function prepareRequest(
   path: string,
   init: RequestInit = {},
   timeoutMs: number = REQUEST_TIMEOUT_MS,
-): Promise<T> {
+): Promise<{ response: Response; timer: TimeoutHandle }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -257,6 +277,20 @@ async function request<T>(
     if (!response.ok) {
       throw new ApiError(response.status, await errorDetail(response));
     }
+    return { response, timer };
+  } catch (err) {
+    clearTimeout(timer);
+    throw err;
+  }
+}
+
+async function request<T>(
+  path: string,
+  init: RequestInit = {},
+  timeoutMs: number = REQUEST_TIMEOUT_MS,
+): Promise<T> {
+  const { response, timer } = await prepareRequest(path, init, timeoutMs);
+  try {
     if (response.status === 204) {
       return undefined as T;
     }
@@ -424,11 +458,24 @@ export function generateClass(
   );
 }
 
-export function sendAction(
+/**
+ * Send a player action and consume the turn's server-sent event stream.
+ *
+ * The backend emits zero or more `roll` frames as the d20 checks resolve, then
+ * exactly one terminal frame: `message` (the full `ActionResponse`) or `error`
+ * (`{detail, status}`). `onRolls` is invoked for every `roll` frame with that
+ * frame's resolved checks. The returned promise resolves with the `message`
+ * payload and rejects with an `ApiError` on an `error` frame, on the total
+ * timeout abort, or when the stream ends without a terminal frame. Failures
+ * before the stream opens keep the same `ApiError` shape as `request()`, so
+ * the caller's rollback semantics are unchanged.
+ */
+export async function sendAction(
   sessionId: string,
   action: string,
+  onRolls?: (rolls: RollOutcome[]) => void,
 ): Promise<ActionResponse> {
-  return request<ActionResponse>(
+  const { response, timer } = await prepareRequest(
     `/sessions/${sessionId}/actions`,
     {
       method: "POST",
@@ -436,6 +483,55 @@ export function sendAction(
     },
     LLM_TIMEOUT_MS,
   );
+
+  const reader = response.body?.getReader();
+  if (reader === undefined) {
+    clearTimeout(timer);
+    throw new ApiError(response.status, "Response body is not readable");
+  }
+
+  let payload: ActionResponse | null = null;
+  let failure: ApiError | null = null;
+
+  try {
+    await parseSseStream(reader, (frame) => {
+      if (frame.event === "roll") {
+        const { rolls } = JSON.parse(frame.data) as { rolls: RollOutcome[] };
+        onRolls?.(rolls);
+      } else if (frame.event === "message") {
+        payload = JSON.parse(frame.data) as ActionResponse;
+      } else if (frame.event === "error") {
+        const { detail, status } = JSON.parse(frame.data) as {
+          detail: string;
+          status: number;
+        };
+        failure = new ApiError(status, detail);
+      }
+    });
+  } catch (err) {
+    clearTimeout(timer);
+    try {
+      await reader.cancel();
+    } catch {
+      // The stream already failed; there is nothing left to release.
+    }
+    if (failure !== null) {
+      throw failure;
+    }
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new ApiError(0, "The action timed out before the turn completed");
+    }
+    throw err;
+  }
+
+  clearTimeout(timer);
+  if (failure !== null) {
+    throw failure;
+  }
+  if (payload === null) {
+    throw new ApiError(0, "The turn stream ended without a result");
+  }
+  return payload;
 }
 
 export function getState(sessionId: string): Promise<StateResponse> {
