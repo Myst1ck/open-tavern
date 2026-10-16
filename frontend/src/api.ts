@@ -496,16 +496,27 @@ export async function sendAction(
   try {
     await parseSseStream(reader, (frame) => {
       if (frame.event === "roll") {
-        const { rolls } = JSON.parse(frame.data) as { rolls: RollOutcome[] };
-        onRolls?.(rolls);
-      } else if (frame.event === "message") {
-        payload = JSON.parse(frame.data) as ActionResponse;
-      } else if (frame.event === "error") {
-        const { detail, status } = JSON.parse(frame.data) as {
-          detail: string;
-          status: number;
-        };
-        failure = new ApiError(status, detail);
+        try {
+          const { rolls } = JSON.parse(frame.data) as { rolls: RollOutcome[] };
+          onRolls?.(rolls);
+        } catch {
+          // A malformed roll frame only costs the animation, never the turn.
+        }
+        return;
+      }
+      try {
+        if (frame.event === "message") {
+          payload = JSON.parse(frame.data) as ActionResponse;
+        } else if (frame.event === "error") {
+          const { detail, status } = JSON.parse(frame.data) as {
+            detail: string;
+            status: number;
+          };
+          failure = new ApiError(status, detail);
+        }
+      } catch {
+        // A terminal frame cut mid-JSON means the stream ended without a result.
+        failure = new ApiError(0, "The turn stream ended without a result");
       }
     });
   } catch (err) {
