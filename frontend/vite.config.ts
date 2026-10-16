@@ -10,7 +10,8 @@ declare const process: { env: Record<string, string | undefined> };
 // Container prod serves at root; both are env-driven so one config covers both.
 const base = process.env.VITE_BASE ?? "/tavern/";
 
-const proxyTarget = process.env.OPEN_TAVERN_PROXY_TARGET ?? "http://127.0.0.1:8000";
+const proxyTarget =
+  process.env.OPEN_TAVERN_PROXY_TARGET ?? "http://127.0.0.1:8000";
 
 const backendProxy = {
   "/sessions": proxyTarget,

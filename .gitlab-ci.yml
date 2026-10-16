@@ -1,0 +1,50 @@
+# .gitlab-ci.yml — scaffolded by /init-project 2026-10-07 (read-only discovery; never executed here)
+# Instance: homelab GitLab CE — slave.tail7c13f3.ts.net (web :8080, git ssh :2222), runner "slave-podman"
+# (rootless podman, docker executor via podman.sock).
+#
+# UNVERIFIED (honest limits, do not trust until exercised once):
+# 1. The backend test suite is real and green locally (`cd backend && uv run --extra dev pytest -q`,
+#    412 passed 2026-10-13), but the runner image's toolchain (python/uv) is unverified — the test
+#    job has never executed on this runner. If it fails there, fix the runner image, not the command.
+# 2. Building podman images inside the runner's docker executor (rootless podman-in-podman) is unproven.
+# 3. The runner container has no confirmed sudo/kubectl/k3s access — the k3s import + rollout steps are
+#    expected to FAIL from CI. Keep deploy-prod allow_failure until someone runs it once for real.
+# Manual prod flow lives in deploy/k3s/README.md and .omp/commands/deploy-prod.md.
+
+stages: [test, build, deploy]
+
+variables:
+  BACKEND_IMAGE: localhost/open-tavern_backend:latest
+  FRONTEND_IMAGE: localhost/open-tavern_frontend:tavern
+  PROD_URL: https://slave.tail7c13f3.ts.net/tavern
+
+test:
+  stage: test
+  script:
+    - cd backend
+    - uv sync --extra dev
+    - uv run pytest -q
+  allow_failure: false
+
+build-images:
+  stage: build
+  # TODO(unverified): needs a buildah/podman-capable image and rootless storage config inside the
+  # runner. Real intent: podman build ./backend -> $BACKEND_IMAGE and
+  # podman build --build-arg VITE_BASE=/tavern/ ./frontend -> $FRONTEND_IMAGE (subpath arg mandatory).
+  script:
+    - echo "UNVERIFIED: image build inside rootless-podman runner not exercised yet. See comments above and deploy/k3s/README.md."
+  allow_failure: true
+
+deploy-prod:
+  stage: deploy
+  environment:
+    name: production
+    url: https://slave.tail7c13f3.ts.net/tavern
+  # UNVERIFIED: runner (rootless podman container) has no confirmed sudo for
+  # `k3s ctr images import` nor kubectl against the home namespace. Treat as a
+  # documented manual step: build -> podman save | sudo k3s ctr images import -
+  # -> kubectl -n home rollout restart deploy/open-tavern-backend / -frontend
+  # -> kubectl -n home rollout status ... -> curl $PROD_URL (expect 200).
+  script:
+    - echo "UNVERIFIED runner permissions (sudo k3s ctr / kubectl). Manual flow: .omp/commands/deploy-prod.md + deploy/k3s/README.md. This job must not gate merges."
+  allow_failure: true

@@ -6,8 +6,10 @@ import random
 
 from open_tavern.character import normalize
 from open_tavern.dice import roll_expression
-from open_tavern.state import new_state
+from open_tavern.state import apply_hp, new_state
 from open_tavern.story import RollOutcome, TurnResult, turn
+from open_tavern.story.prompts import user_action_prompt
+from open_tavern.story.style import TONES, VERBOSITIES, DmStyle
 
 
 class FakeClient:
@@ -65,6 +67,17 @@ def test_turn_no_check_applies_state_tags_without_second_call():
     assert result.llm_calls == 1
     assert result.state.current_hp == state.current_hp - 3
     assert any(item.name == "potion" for item in result.state.character.inventory)
+
+
+def test_turn_negative_damage_total_does_not_heal():
+    """A damage tag whose total is negative (``1d6-100``) must not restore HP."""
+    state = apply_hp(new_state(_character()), -5)
+    client = FakeClient(["Blood wells. [DAMAGE:1d6-100]"])
+
+    result = turn("I swing wildly", state, [], client, rng=random.Random(0))
+
+    assert result.llm_calls == 1
+    assert result.state.current_hp == state.current_hp
 
 
 # --- check: two calls, engine rolls -------------------------------------
@@ -261,3 +274,56 @@ def test_turn_appends_player_action_and_final_narration_to_messages():
     assert history[0] in sent
     # player action is wrapped as untrusted data
     assert any("<player_action>" in message["content"] for message in sent)
+
+
+def test_turn_forwards_say_kind_to_last_message():
+    state = new_state(_character())
+    client = FakeClient(["The barkeep nods."])
+    turn("Evening, friend.", state, [], client, rng=random.Random(0), kind="say")
+
+    sent = client.calls[0]["messages"]
+    last = sent[-1]
+    assert last["role"] == "user"
+    assert "says the following aloud, in character" in last["content"]
+    assert "<player_action>" in last["content"]
+    assert "Evening, friend." in last["content"]
+
+
+def test_turn_forwards_continue_kind_to_last_message():
+    state = new_state(_character())
+    client = FakeClient(["Time passes."])
+    turn("", state, [], client, rng=random.Random(0), kind="continue")
+
+    last = client.calls[0]["messages"][-1]
+    assert last["role"] == "user"
+    assert "has not declared an action" in last["content"]
+    assert "Advance the scene on your own" in last["content"]
+    assert "<player_action>" not in last["content"]
+
+
+def test_turn_default_kind_is_act():
+    state = new_state(_character())
+    client = FakeClient(["The door creaks open."])
+    turn("I look around", state, [], client, rng=random.Random(0))
+
+    last = client.calls[0]["messages"][-1]
+    assert last["content"] == user_action_prompt("I look around")
+
+
+def test_turn_forwards_style_to_system_prompt():
+    state = new_state(_character())
+    client = FakeClient(["The alley stinks of fish."])
+    turn(
+        "I walk in",
+        state,
+        [],
+        client,
+        rng=random.Random(0),
+        style=DmStyle("gritty", "concise", "speak like a sea dog"),
+    )
+
+    system = client.calls[0]["messages"][0]["content"]
+    assert "NARRATION STYLE:" in system
+    assert TONES["gritty"] in system
+    assert VERBOSITIES["concise"] in system
+    assert "speak like a sea dog" in system

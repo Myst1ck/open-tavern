@@ -58,10 +58,14 @@ def _validate_base_url(url: str) -> None:
 
     Requires an ``http``/``https`` scheme and blocks link-local/reserved IP
     literals (notably cloud metadata ``169.254.169.254``), including their
-    IPv4-mapped IPv6 forms. Hostnames are resolved now and every resolved
-    address is checked, closing static DNS-rebinding (a hostile DNS server
-    could still rebind after this check — see the residual TOCTOU note).
-    Private and loopback ranges are intentionally allowed so local models
+    IPv4-mapped IPv6 forms. Hostnames are resolved and every resolved address
+    is checked, closing static DNS-rebinding. ``OpenAIClient.chat`` re-runs
+    this check before every request, so a host that only starts resolving to
+    a blocked address later is still refused (a hostile DNS server could
+    still rebind between the check and the send — that residual TOCTOU would
+    require pinning resolved IPs inside the HTTP transport to close).
+    Unresolvable hosts pass: the send would fail on DNS anyway. Private and
+    loopback ranges are intentionally allowed so local models
     keep working. Raises ``ValueError`` for anything rejected.
     """
     try:
@@ -77,7 +81,7 @@ def _validate_base_url(url: str) -> None:
         try:
             infos = socket.getaddrinfo(parts.hostname, None)
         except OSError:
-            return  # unresolvable — allow; revalidated at request time
+            return  # unresolvable — allow; chat() re-checks before each send
         for info in infos:
             if _check_ip(ipaddress.ip_address(info[4][0])):
                 raise ValueError(
@@ -86,6 +90,62 @@ def _validate_base_url(url: str) -> None:
         return
     if _check_ip(addr):
         raise ValueError(f"base URL host {parts.hostname!r} is not allowed")
+
+
+def is_local_base_url(url: str) -> bool:
+    """Return ``True`` when ``url`` points at a loopback/private host.
+
+    Local model servers (Ollama, LM Studio, llama.cpp) commonly run without an
+    API key, so callers use this to skip the key requirement for them. Only
+    literal ``localhost`` and loopback/private IP literals count; a hostname
+    that merely resolves to a private address is not treated as local.
+    """
+    try:
+        host = urlsplit(url).hostname
+    except ValueError:
+        return False
+    if not host:
+        return False
+    if host.lower() == "localhost":
+        return True
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        addr = addr.ipv4_mapped
+    return addr.is_loopback or addr.is_private
+
+
+#: Provider site URLs whose OpenAI-compatible API root differs from the site
+#: root. OpenRouter's chat completions live at ``/api/v1`` beneath the site URL
+#: users know (``https://openrouter.ai``); posting to the bare site URL hits
+#: the marketing site and fails with a JSON decode error.
+_PROVIDER_API_ROOTS: dict[str, str] = {
+    "openrouter.ai": "/api/v1",
+    "www.openrouter.ai": "/api/v1",
+}
+
+
+def _normalize_base_url(url: str) -> str:
+    """Map a bare provider site URL to its OpenAI-compatible API root.
+
+    Only empty-path URLs are rewritten; URLs that already carry a path
+    (``https://openrouter.ai/api/v1``, ``http://localhost:11434/v1``) pass
+    through unchanged.
+    """
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return url  # malformed — _validate_base_url reports it
+    if (
+        parts.path in ("", "/")
+        and not parts.query
+        and not parts.fragment
+        and parts.hostname in _PROVIDER_API_ROOTS
+    ):
+        return f"{parts.scheme}://{parts.netloc}{_PROVIDER_API_ROOTS[parts.hostname]}"
+    return url
 
 
 class LLMClientError(RuntimeError):
@@ -104,11 +164,13 @@ class OpenAIClient:
         self.api_key = (
             api_key if api_key is not None else os.environ.get("OPENAI_API_KEY", "")
         )
-        self.base_url = (
-            base_url
-            if base_url is not None
-            else os.environ.get("OPENAI_BASE_URL", DEFAULT_BASE_URL)
-        ).rstrip("/")
+        self.base_url = _normalize_base_url(
+            (
+                base_url
+                if base_url is not None
+                else os.environ.get("OPENAI_BASE_URL", DEFAULT_BASE_URL)
+            ).rstrip("/")
+        )
         _validate_base_url(self.base_url)
         self.model = (
             model
@@ -136,6 +198,9 @@ class OpenAIClient:
             "Content-Type": "application/json",
         }
         try:
+            # Re-validate before sending: DNS may now resolve to a blocked
+            # address that was not there at construction time.
+            _validate_base_url(self.base_url)
             response = _HTTP_CLIENT.post(
                 f"{self.base_url}/chat/completions",
                 json=payload,

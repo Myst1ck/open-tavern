@@ -36,6 +36,11 @@ def test_from_dict_accepts_base_type_instance() -> None:
     assert item.type is BaseType.armor
 
 
+def test_from_dict_negative_quantity_clamped_to_zero() -> None:
+    item = Item.from_dict(_raw(quantity=-3))
+    assert item.quantity == 0
+
+
 def test_from_dict_quantity_coerced_to_int() -> None:
     item = Item.from_dict(_raw(quantity="3"))
     assert item.quantity == 3

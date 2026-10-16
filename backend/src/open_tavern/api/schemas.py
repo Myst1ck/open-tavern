@@ -9,13 +9,21 @@ Tuples and frozensets become lists so the payloads encode cleanly.
 from __future__ import annotations
 
 from dataclasses import asdict
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal, overload
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from open_tavern.character import CharacterSheet
 from open_tavern.state import GameState
 from open_tavern.story import RollOutcome
+from open_tavern.story.style import (
+    DEFAULT_TONE,
+    DEFAULT_VERBOSITY,
+    TONES,
+    VERBOSITIES,
+    DmStyle,
+    normalize_dm_style,
+)
 
 
 class WorldGenerateRequest(BaseModel):
@@ -37,12 +45,47 @@ class WorldGenerateResponse(BaseModel):
     premise: str
 
 
+class DmStyleRequest(BaseModel):
+    """Request body for the DM narration style.
+
+    ``tone`` and ``verbosity`` must be registry keys (:data:`TONES`,
+    :data:`VERBOSITIES`) — unknown keys fail with 422 instead of silently
+    defaulting. ``custom_tone`` is a free-form note, capped at 1000 chars by
+    the field below and sanitized by the prompt builder.
+    """
+
+    tone: str = Field(default=DEFAULT_TONE, max_length=200)
+    verbosity: str = Field(default=DEFAULT_VERBOSITY, max_length=200)
+    custom_tone: str = Field(default="", max_length=1000)
+
+    @field_validator("tone")
+    @classmethod
+    def _known_tone(cls, value: str) -> str:
+        if value not in TONES:
+            raise ValueError(f"unknown tone: expected one of {sorted(TONES)}")
+        return value
+
+    @field_validator("verbosity")
+    @classmethod
+    def _known_verbosity(cls, value: str) -> str:
+        if value not in VERBOSITIES:
+            raise ValueError(
+                f"unknown verbosity: expected one of {sorted(VERBOSITIES)}"
+            )
+        return value
+
+    def to_style(self) -> DmStyle:
+        """Return the normalized :class:`DmStyle` for this request."""
+        return normalize_dm_style(self.model_dump())
+
+
 class CreateSessionRequest(BaseModel):
     """Request body for creating a new game session."""
 
     world_theme: str = Field(max_length=200)
     title: str | None = Field(default=None, max_length=200)
     premise: str | None = Field(default=None, max_length=2000)
+    dm_style: DmStyleRequest | None = None
 
 
 class CreateSessionResponse(BaseModel):
@@ -51,6 +94,7 @@ class CreateSessionResponse(BaseModel):
     session_id: str
     world_theme: str
     premise: str | None = None
+    dm_style: dict | None = None
 
 
 class CharacterRequest(BaseModel):
@@ -119,9 +163,14 @@ class ClassResponse(BaseModel):
 
 
 class ActionRequest(BaseModel):
-    """Request body for submitting a player action."""
+    """Request body for submitting a player action.
+
+    ``kind`` defaults to ``"act"`` so legacy bodies carrying only ``action``
+    remain valid.
+    """
 
     action: str = Field(max_length=2000)
+    kind: Literal["say", "act", "continue"] = "act"
 
 
 class ActionResponse(BaseModel):
@@ -156,6 +205,7 @@ class SessionDetail(BaseModel):
     state: dict
     character: dict
     messages: list[dict]
+    dm_style: dict | None = None
 
 
 class RenameSessionRequest(BaseModel):
@@ -205,6 +255,21 @@ class CreateItemRequest(BaseModel):
         default=None, max_length=20
     )
     description: str | None = Field(default=None, max_length=2000)
+
+
+@overload
+def dm_style_to_dict(style: DmStyle) -> dict: ...
+
+
+@overload
+def dm_style_to_dict(style: None) -> None: ...
+
+
+def dm_style_to_dict(style: DmStyle | None) -> dict | None:
+    """Serialize a :class:`DmStyle` into a JSON-friendly dict."""
+    if style is None:
+        return None
+    return asdict(style)
 
 
 def character_to_dict(character: CharacterSheet) -> dict:

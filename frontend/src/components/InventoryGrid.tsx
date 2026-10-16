@@ -1,4 +1,4 @@
-import type { BaseType, Item } from "../api";
+import type { BaseType, Item } from "../api/types";
 
 const TYPE_EMOJI: Record<BaseType, string> = {
   weapon: "🗡️",
@@ -12,7 +12,8 @@ const TYPE_EMOJI: Record<BaseType, string> = {
 interface InventoryGridProps {
   items: Item[];
   onItemClick: (item: Item) => void;
-  onItemHover: (item: Item | null) => void;
+  /** `point` is set on keyboard focus, where there is no cursor to follow. */
+  onItemHover: (item: Item | null, point?: { x: number; y: number }) => void;
 }
 
 export default function InventoryGrid({
@@ -33,7 +34,13 @@ export default function InventoryGrid({
           onClick={() => onItemClick(item)}
           onMouseEnter={() => onItemHover(item)}
           onMouseLeave={() => onItemHover(null)}
-          onFocus={() => onItemHover(item)}
+          onFocus={(event) => {
+            const rect = event.currentTarget.getBoundingClientRect();
+            onItemHover(item, {
+              x: rect.left + rect.width / 2,
+              y: rect.top,
+            });
+          }}
           onBlur={() => onItemHover(null)}
           type="button"
         >

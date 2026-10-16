@@ -20,6 +20,7 @@ from open_tavern.character import CharacterSheet, normalize
 from open_tavern.character.items import BaseType, Item
 from open_tavern.state import GameState, state_from_persistable, state_to_persistable
 from open_tavern.story.game import RollOutcome
+from open_tavern.story.style import DmStyle, normalize_dm_style
 
 #: Current schema version, tracked in the ``meta`` table.
 #:
@@ -31,7 +32,8 @@ from open_tavern.story.game import RollOutcome
 #:   * 4 — adds session metadata columns (``premise``, ``title``,
 #:     ``updated_at``, ``state_json``).
 #:   * 5 — adds the ``messages.rolls_json`` column (resolved check rolls
-#:     persisted with the assistant narration).
+#:     persisted with the assistant narration) and the ``dm_style_json``
+#:     session column (DM narration style).
 #:
 #: Older databases are migrated forward step by step (see ``_MIGRATIONS``);
 #: databases from a newer build are refused, never dropped.
@@ -46,6 +48,14 @@ class SchemaTooNewError(RuntimeError):
     """
 
 
+class SchemaCorruptError(RuntimeError):
+    """Raised when the stored schema version cannot be parsed.
+
+    The version is never guessed: reading it as ``0`` would run the migration
+    steps against tables that may not exist (an opaque ``no such table``
+    error), and rebuilding the schema would discard data written by a format
+    this build does not understand.
+    """
 #: ``meta`` row key holding the schema version written by :meth:`Storage.init`.
 _SCHEMA_VERSION_KEY: str = "schema_version"
 
@@ -86,7 +96,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     premise TEXT,
     title TEXT,
     updated_at TEXT,
-    state_json TEXT
+    state_json TEXT,
+    dm_style_json TEXT
 );
 
 CREATE TABLE IF NOT EXISTS characters (
@@ -145,6 +156,15 @@ def _add_message_rolls_column(conn: sqlite3.Connection) -> None:
     existing = {row[1] for row in conn.execute("PRAGMA table_info(messages)")}
     if "rolls_json" not in existing:
         conn.execute("ALTER TABLE messages ADD COLUMN rolls_json TEXT")
+def _add_dm_style_column(conn: sqlite3.Connection) -> None:
+    """Add the schema-v5 ``dm_style_json`` session column (idempotent).
+
+    ``ALTER TABLE ADD COLUMN`` fails if the column already exists, so it is
+    added only when missing. Mirrors :func:`_add_session_columns`.
+    """
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
+    if "dm_style_json" not in existing:
+        conn.execute("ALTER TABLE sessions ADD COLUMN dm_style_json TEXT")
 
 
 #: Ordered schema migrations. Each entry is ``(version, step)``: ``version``
@@ -157,6 +177,7 @@ _MIGRATIONS: list[tuple[int, str | Callable[[sqlite3.Connection], None]]] = [
     (3, _ITEMS_SCHEMA),  # 2 -> 3: items table
     (4, _add_session_columns),  # 3 -> 4: session metadata columns
     (5, _add_message_rolls_column),  # 4 -> 5: persisted check rolls column
+    (5, _add_dm_style_column),  # 4 -> 5: DM narration style column
 ]
 
 
@@ -205,6 +226,8 @@ class Storage:
           in order. No data is dropped.
         * stored version > ``SCHEMA_VERSION`` — database from a newer build:
           raise :class:`SchemaTooNewError` instead of opening it.
+        * stored version unparseable — corrupt ``meta`` row: raise
+          :class:`SchemaCorruptError` instead of guessing a version.
         """
         with self._lock, self._conn:
             # The meta table must exist before the version can be read.
@@ -247,8 +270,10 @@ class Storage:
     def _read_schema_version(self) -> int | None:
         """Return the stored schema version, or ``None`` if no row exists.
 
-        An unparseable stored value is treated as ``0`` so it migrates from
-        the earliest version rather than erroring.
+        Raises:
+            SchemaCorruptError: If the stored value is not an integer. Guessing
+                a version would either run migrations against tables that may
+                not exist or silently rebuild a database of unknown format.
         """
         row = self._conn.execute(
             "SELECT value FROM meta WHERE key = ?", (_SCHEMA_VERSION_KEY,)
@@ -257,8 +282,11 @@ class Storage:
             return None
         try:
             return int(row["value"])
-        except (TypeError, ValueError):
-            return 0
+        except (TypeError, ValueError) as exc:
+            raise SchemaCorruptError(
+                f"Unparseable {_SCHEMA_VERSION_KEY} value {row['value']!r} in the "
+                f"meta table; refusing to guess the schema version."
+            ) from exc
 
     def _write_schema_version(self) -> None:
         """Upsert the current schema version into the ``meta`` table."""
@@ -339,21 +367,39 @@ class Storage:
         world_theme: str,
         title: str | None = None,
         premise: str | None = None,
+        dm_style: DmStyle | dict | None = None,
     ) -> str:
         """Persist a new session and return its unique id.
 
         ``title`` defaults to ``world_theme`` when omitted or empty.
         ``premise`` is an optional LLM-generated story premise for the
-        campaign setting.
+        campaign setting. ``dm_style`` is an optional DM narration style
+        (a :class:`~open_tavern.story.style.DmStyle` or raw dict); it is
+        stored normalized via :func:`normalize_dm_style`, or ``NULL`` when
+        omitted.
         """
         session_id = uuid4().hex
         now = _now_iso()
+        style_json = (
+            json.dumps(asdict(normalize_dm_style(dm_style)))
+            if dm_style is not None
+            else None
+        )
         with self._lock, self._conn:
             self._conn.execute(
                 "INSERT INTO sessions "
-                "(id, created_at, world_theme, premise, title, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (session_id, now, world_theme, premise, title or world_theme, now),
+                "(id, created_at, world_theme, premise, title, updated_at, "
+                "dm_style_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    session_id,
+                    now,
+                    world_theme,
+                    premise,
+                    title or world_theme,
+                    now,
+                    style_json,
+                ),
             )
         return session_id
 
@@ -410,6 +456,31 @@ class Storage:
                 "VALUES (?, ?, ?, ?, ?)",
                 (session_id, "assistant", assistant_message, now, rolls_json),
             )
+
+    def save_opening(
+        self, session_id: str, state: GameState, opening: str | None
+    ) -> None:
+        """Persist the seeded game state and opening narration atomically.
+
+        Mirrors :meth:`save_turn` for character creation: the state and the
+        opening assistant message commit in a single transaction, so a crash
+        between writes can never leave state and transcript diverging. The
+        message row is written only when ``opening`` is non-empty. Bumps
+        ``updated_at`` like :meth:`save_state`.
+        """
+        data_json = json.dumps(state_to_persistable(state))
+        now = _now_iso()
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE sessions SET state_json = ?, updated_at = ? WHERE id = ?",
+                (data_json, now, session_id),
+            )
+            if opening:
+                self._conn.execute(
+                    "INSERT INTO messages (session_id, role, content, created_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    (session_id, "assistant", opening, now),
+                )
 
     def load_state(
         self, session_id: str, character: CharacterSheet
@@ -614,6 +685,42 @@ class Storage:
         if row is None:
             return None
         return row["premise"]
+
+    def session_dm_style(self, session_id: str) -> DmStyle | None:
+        """Return the stored DM narration style for ``session_id``, or ``None``.
+
+        Single-column probe mirroring :meth:`session_premise`. Sessions
+        created before schema v5 and cleared styles store ``NULL`` and probe
+        as ``None``. A stored value is returned normalized so a hand-edited
+        row always yields a usable style.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT dm_style_json FROM sessions WHERE id = ?", (session_id,)
+            ).fetchone()
+        if row is None or row["dm_style_json"] is None:
+            return None
+        try:
+            data = json.loads(row["dm_style_json"])
+        except (TypeError, ValueError):
+            return None
+        return normalize_dm_style(data)
+
+    def update_dm_style(self, session_id: str, style: DmStyle | dict | None) -> bool:
+        """Set the DM narration style for ``session_id``; ``True`` if a row changed.
+
+        ``None`` clears the style (later probes return ``None``). Like
+        :meth:`rename_session`, bumps ``updated_at``.
+        """
+        style_json = (
+            json.dumps(asdict(normalize_dm_style(style))) if style is not None else None
+        )
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                "UPDATE sessions SET dm_style_json = ?, updated_at = ? WHERE id = ?",
+                (style_json, _now_iso(), session_id),
+            )
+        return cur.rowcount > 0
 
     def session_summary(self, session_id: str) -> dict | None:
         """Return a single session summary row, or ``None`` if unknown."""

@@ -6,26 +6,30 @@ dependencies are replaced via ``app.dependency_overrides``.
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-import open_tavern.api.routes as routes_module
-from open_tavern.api.main import create_app
-from open_tavern.api.ratelimit import RateLimiter
-from open_tavern.api.routes import (
-    _STATE_CACHE,
+import open_tavern.api.main as main_module
+import open_tavern.api.runtime as runtime_module
+from open_tavern.api import guards
+from open_tavern.api.llm import (
     build_client_from_headers,
     get_client,
     get_per_request_client,
-    get_storage,
 )
+from open_tavern.api.main import create_app
+from open_tavern.api.ratelimit import RateLimiter
+from open_tavern.api.runtime import STATE_CACHE, get_storage
 from open_tavern.character.items import BaseType, Item
 from open_tavern.state import GameState, new_state
 from open_tavern.storage import Storage
 from open_tavern.story import OpenAIClient
+from open_tavern.story.client import LLMClientError
+from open_tavern.story.style import TONES, VERBOSITIES
 
 
 class FakeClient:
@@ -38,6 +42,16 @@ class FakeClient:
     def chat(self, messages, temperature=0.7, json_mode=False):
         self.calls.append({"messages": messages, "json_mode": json_mode})
         return self.responses.pop(0)
+
+
+class _FailingClient:
+    """Fake chat client whose every call fails with an upstream-style error."""
+
+    def chat(self, messages, temperature=0.7, json_mode=False):
+        raise LLMClientError(
+            "LLM request failed: Client error '401 Unauthorized' for url "
+            "'https://api.openai.com/v1/chat/completions'"
+        )
 
 
 def _valid_sheet_raw() -> dict:
@@ -254,11 +268,11 @@ def test_delete_session_removes_from_cache(storage):
     client = _make_client(storage, FakeClient([json.dumps(_valid_sheet_raw())]))
     session_id = storage.create_session("gothic")
     client.post(f"/sessions/{session_id}/character", json={"description": "elf"})
-    assert session_id in _STATE_CACHE
+    assert session_id in STATE_CACHE
 
     client.delete(f"/sessions/{session_id}")
 
-    assert session_id not in _STATE_CACHE
+    assert session_id not in STATE_CACHE
 
 
 # --- state persistence ---------------------------------------------------
@@ -294,7 +308,7 @@ def test_get_state_loads_persisted_state_after_cache_cleared(storage):
         character=character,
     )
     storage.save_state(session_id, persisted)
-    _STATE_CACHE.pop(session_id, None)
+    STATE_CACHE.pop(session_id, None)
 
     resp = client.get(f"/sessions/{session_id}/state")
 
@@ -485,6 +499,54 @@ def test_get_per_request_client_empty_base_url_falls_back_to_env(monkeypatch):
     assert client.base_url == "http://env:8000/v1"
 
 
+def test_get_per_request_client_header_key_works_without_env(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+
+    client = get_per_request_client(
+        x_api_key="sk-from-settings",
+        x_model=None,
+        x_base_url=None,
+    )
+
+    assert isinstance(client, OpenAIClient)
+    assert client.api_key == "sk-from-settings"
+
+
+def test_get_per_request_client_keyless_local_base_url_allowed(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+
+    client = get_per_request_client(
+        x_api_key=None,
+        x_model=None,
+        x_base_url="http://localhost:11434/v1",
+    )
+
+    assert isinstance(client, OpenAIClient)
+    assert client.api_key == ""
+
+
+def test_get_per_request_client_missing_key_points_to_settings(monkeypatch):
+    # A keyless non-local client is reachable only through the environment
+    # client: an X-Base-Url header without X-API-Key is rejected with 400 by the
+    # base-URL/key pairing rule (see test_base_url_header_without_api_key_rejected)
+    # before the keyless check below could run.
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+
+    with pytest.raises(HTTPException) as excinfo:
+        get_per_request_client(
+            x_api_key=None,
+            x_model=None,
+            x_base_url=None,
+            env_client=OpenAIClient(),
+        )
+
+    assert excinfo.value.status_code == 503
+    assert "Settings" in excinfo.value.detail
+
+
 def test_build_client_from_headers_invalid_base_url_raises_400(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
@@ -499,14 +561,91 @@ def test_x_base_url_header_blocked_by_endpoint(storage):
     fake = FakeClient(['{"theme": "gothic", "premise": "a haunted tavern"}'])
     client = _make_client(storage, fake)
 
+    # A matching key is sent so the request reaches the SSRF check rather than
+    # being short-circuited by the base-URL/key pairing rule.
     resp = client.post(
         "/world/generate",
         json={"description": "hi"},
-        headers={"X-Base-Url": "http://169.254.169.254/v1"},
+        headers={"X-API-Key": "sk-test", "X-Base-Url": "http://169.254.169.254/v1"},
     )
 
     assert resp.status_code == 400
     assert not fake.calls  # blocked base URL rejected before any LLM call
+
+
+def test_build_client_from_headers_base_url_requires_api_key(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "env-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://env:8000/v1")
+
+    with pytest.raises(HTTPException) as excinfo:
+        build_client_from_headers(
+            api_key="", model="", base_url="https://openrouter.ai/api/v1"
+        )
+
+    assert excinfo.value.status_code == 400
+
+
+def test_base_url_header_without_api_key_rejected(storage):
+    """An env key must never be sent to a caller-chosen base URL."""
+    fake = FakeClient(['{"theme": "gothic", "premise": "a haunted tavern"}'])
+    client = _make_client(storage, fake)
+
+    resp = client.post(
+        "/world/generate",
+        json={"description": "hi"},
+        headers={"X-Base-Url": "https://openrouter.ai/api/v1"},
+    )
+
+    assert resp.status_code == 400
+    assert not fake.calls
+
+
+def test_llm_failure_detail_is_sanitized(storage):
+    """Upstream error text (URLs, bodies) stays out of the client response."""
+    app = create_app()
+    app.dependency_overrides[get_storage] = lambda: storage
+    app.dependency_overrides[get_client] = lambda: _FailingClient()
+    client = TestClient(app)
+
+    resp = client.post("/world/generate", json={"description": "spooky"})
+
+    assert resp.status_code == 502
+    assert resp.json()["detail"] == "LLM request failed"
+    assert "api.openai.com" not in resp.text
+
+
+def test_lifespan_calls_shutdown_runtime(monkeypatch):
+    calls: list[int] = []
+    monkeypatch.setattr(main_module, "shutdown_runtime", lambda: calls.append(1))
+
+    async def enter_and_exit() -> None:
+        async with main_module._lifespan(main_module.app):
+            pass
+
+    asyncio.run(enter_and_exit())
+
+    assert calls == [1]
+
+
+def test_shutdown_runtime_releases_executor_storage_and_state(monkeypatch):
+    events: list[str] = []
+
+    class _FakeExecutor:
+        def shutdown(self, *, wait, cancel_futures):
+            events.append(f"executor(wait={wait}, cancel={cancel_futures})")
+
+    class _FakeStorage:
+        def close(self):
+            events.append("storage closed")
+
+    monkeypatch.setattr(runtime_module, "LLM_EXECUTOR", _FakeExecutor())
+    monkeypatch.setattr(runtime_module, "open_storage", _FakeStorage())
+    STATE_CACHE["stale-session"] = object()  # type: ignore[assignment]
+
+    runtime_module.shutdown_runtime()
+
+    assert events == ["executor(wait=False, cancel=True)", "storage closed"]
+    assert "stale-session" not in STATE_CACHE
 
 
 def test_unknown_session_returns_404(storage):
@@ -534,7 +673,7 @@ def _structured_sheet_raw() -> dict:
 
 
 def test_create_character_structured_request_returns_sheet(storage, monkeypatch):
-    monkeypatch.setattr(routes_module, "_character_limiter", RateLimiter(5, 60.0))
+    monkeypatch.setattr(guards, "character_limiter", RateLimiter(5, 60.0))
     client = _make_client(storage, FakeClient([json.dumps(_structured_sheet_raw())]))
     session_id = storage.create_session("gothic")
 
@@ -574,7 +713,7 @@ def test_create_character_structured_request_returns_sheet(storage, monkeypatch)
 def test_create_character_legacy_description_only_keeps_persona_keys(
     storage, monkeypatch
 ):
-    monkeypatch.setattr(routes_module, "_character_limiter", RateLimiter(5, 60.0))
+    monkeypatch.setattr(guards, "character_limiter", RateLimiter(5, 60.0))
     client = _make_client(storage, FakeClient([json.dumps(_valid_sheet_raw())]))
     session_id = storage.create_session("gothic")
 
@@ -592,7 +731,7 @@ def test_create_character_legacy_description_only_keeps_persona_keys(
 
 
 def test_create_character_structured_invalid_llm_returns_502(storage, monkeypatch):
-    monkeypatch.setattr(routes_module, "_character_limiter", RateLimiter(5, 60.0))
+    monkeypatch.setattr(guards, "character_limiter", RateLimiter(5, 60.0))
     client = _make_client(storage, FakeClient(["not json at all"]))
     session_id = storage.create_session("gothic")
 
@@ -605,7 +744,7 @@ def test_create_character_structured_invalid_llm_returns_502(storage, monkeypatc
 
 
 def test_create_character_rate_limited_at_five_per_minute(storage, monkeypatch):
-    monkeypatch.setattr(routes_module, "_character_limiter", RateLimiter(5, 60.0))
+    monkeypatch.setattr(guards, "character_limiter", RateLimiter(5, 60.0))
     responses = [json.dumps(_valid_sheet_raw()) for _ in range(5)]
     client = _make_client(storage, FakeClient(responses))
     session_id = storage.create_session("gothic")
@@ -816,7 +955,7 @@ def test_create_item_before_character_404(storage):
 
 
 def test_create_item_rate_limited(storage, monkeypatch):
-    monkeypatch.setattr(routes_module, "_item_limiter", RateLimiter(3, 60.0))
+    monkeypatch.setattr(guards, "item_limiter", RateLimiter(3, 60.0))
     client = _make_client(storage, FakeClient([json.dumps(_valid_sheet_raw())]))
     session_id = _session_with_character(client, storage)
 
@@ -1027,7 +1166,7 @@ def test_world_generate_missing_fields_502(storage):
 
 
 def test_world_generate_rate_limited(storage, monkeypatch):
-    monkeypatch.setattr(routes_module, "_world_limiter", RateLimiter(3, 60.0))
+    monkeypatch.setattr(guards, "world_limiter", RateLimiter(3, 60.0))
     responses = [
         '{"theme": "gothic horror", "premise": "a haunted tavern"}' for _ in range(3)
     ]
@@ -1039,3 +1178,170 @@ def test_world_generate_rate_limited(storage, monkeypatch):
 
     resp = client.post("/world/generate", json={"description": "spooky"})
     assert resp.status_code == 429
+
+
+# --- dm style ---
+
+
+def test_create_session_echoes_normalized_dm_style(storage):
+    client = _make_client(storage, FakeClient([]))
+
+    resp = client.post(
+        "/sessions",
+        json={
+            "world_theme": "gothic",
+            "dm_style": {"tone": "gritty", "custom_tone": "speak like a sea dog"},
+        },
+    )
+    assert resp.status_code == 201
+    assert resp.json()["dm_style"] == {
+        "tone": "gritty",
+        "verbosity": "standard",
+        "custom_tone": "speak like a sea dog",
+    }
+
+
+def test_create_session_without_dm_style_echoes_none(storage):
+    client = _make_client(storage, FakeClient([]))
+
+    resp = client.post("/sessions", json={"world_theme": "gothic"})
+    assert resp.status_code == 201
+    assert resp.json()["dm_style"] is None
+
+
+def test_create_session_rejects_unknown_tone_or_verbosity(storage):
+    client = _make_client(storage, FakeClient([]))
+
+    for body in ({"tone": "purple"}, {"verbosity": "purple"}):
+        resp = client.post(
+            "/sessions", json={"world_theme": "gothic", "dm_style": body}
+        )
+        assert resp.status_code == 422
+
+
+def test_update_session_style_roundtrip(storage):
+    session_id = storage.create_session("gothic")
+    client = _make_client(storage, FakeClient([]))
+
+    resp = client.put(
+        f"/sessions/{session_id}/style",
+        json={"tone": "heroic", "verbosity": "rich", "custom_tone": "sing"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "tone": "heroic",
+        "verbosity": "rich",
+        "custom_tone": "sing",
+    }
+
+    detail = client.get(f"/sessions/{session_id}").json()
+    assert detail["dm_style"] == resp.json()
+
+
+def test_update_session_style_unknown_session_404(storage):
+    client = _make_client(storage, FakeClient([]))
+
+    resp = client.put("/sessions/nope/style", json={"tone": "gritty"})
+    assert resp.status_code == 404
+
+
+def test_create_character_prompt_includes_opening_style(storage):
+    fake = FakeClient([json.dumps(_valid_sheet_raw())])
+    client = _make_client(storage, fake)
+    session_id = client.post(
+        "/sessions",
+        json={
+            "world_theme": "gothic",
+            "dm_style": {
+                "tone": "gritty",
+                "verbosity": "concise",
+                "custom_tone": "speak like a sea dog",
+            },
+        },
+    ).json()["session_id"]
+
+    resp = client.post(f"/sessions/{session_id}/character", json={"description": "elf"})
+    assert resp.status_code == 200
+
+    prompt = fake.calls[0]["messages"][0]["content"]
+    assert "OPENING NARRATION STYLE:" in prompt
+    assert TONES["gritty"] in prompt
+    assert VERBOSITIES["concise"] in prompt
+    assert "speak like a sea dog" in prompt
+
+
+def test_send_action_system_prompt_uses_dm_style(storage):
+    fake = FakeClient([json.dumps(_valid_sheet_raw()), "You settle in for the night."])
+    client = _make_client(storage, fake)
+    session_id = client.post(
+        "/sessions",
+        json={
+            "world_theme": "gothic",
+            "dm_style": {
+                "tone": "gritty",
+                "verbosity": "concise",
+                "custom_tone": "speak like a sea dog",
+            },
+        },
+    ).json()["session_id"]
+    client.post(f"/sessions/{session_id}/character", json={"description": "elf"})
+
+    resp = client.post(
+        f"/sessions/{session_id}/actions", json={"action": "I look around"}
+    )
+    assert resp.status_code == 200
+
+    system = fake.calls[1]["messages"][0]["content"]
+    assert "NARRATION STYLE:" in system
+    assert TONES["gritty"] in system
+    assert VERBOSITIES["concise"] in system
+    assert "speak like a sea dog" in system
+
+
+def test_send_action_kind_say_reaches_client_prompt(storage):
+    fake = FakeClient([json.dumps(_valid_sheet_raw()), "The barkeep nods."])
+    client = _make_client(storage, fake)
+    session_id = client.post("/sessions", json={"world_theme": "gothic"}).json()[
+        "session_id"
+    ]
+    client.post(f"/sessions/{session_id}/character", json={"description": "elf"})
+
+    resp = client.post(
+        f"/sessions/{session_id}/actions",
+        json={"action": "Evening, friend.", "kind": "say"},
+    )
+    assert resp.status_code == 200
+
+    last = fake.calls[1]["messages"][-1]
+    assert last["role"] == "user"
+    assert "says the following aloud, in character" in last["content"]
+    assert "Evening, friend." in last["content"]
+
+
+def test_mid_game_style_update_applies_to_next_turn(storage):
+    fake = FakeClient(
+        [
+            json.dumps(_valid_sheet_raw()),
+            "You settle in for the night.",
+            "The crowd laughs.",
+        ]
+    )
+    client = _make_client(storage, fake)
+    session_id = client.post("/sessions", json={"world_theme": "gothic"}).json()[
+        "session_id"
+    ]
+    client.post(f"/sessions/{session_id}/character", json={"description": "elf"})
+
+    resp = client.post(
+        f"/sessions/{session_id}/actions", json={"action": "I look around"}
+    )
+    assert resp.status_code == 200
+    assert "NARRATION STYLE:" not in fake.calls[1]["messages"][0]["content"]
+
+    resp = client.put(f"/sessions/{session_id}/style", json={"tone": "comedic"})
+    assert resp.status_code == 200
+
+    resp = client.post(f"/sessions/{session_id}/actions", json={"action": "I laugh"})
+    assert resp.status_code == 200
+    system = fake.calls[2]["messages"][0]["content"]
+    assert TONES["comedic"] in system

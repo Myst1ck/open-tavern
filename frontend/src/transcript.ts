@@ -1,4 +1,4 @@
-import type { RollOutcome } from "./api";
+import type { ActionKind, RollOutcome } from "./api/types";
 
 /**
  * One entry in the play transcript: a narration line or a resolved d20 roll
@@ -7,7 +7,18 @@ import type { RollOutcome } from "./api";
  * the backend streams results.
  */
 export type TranscriptEntry =
-  | { kind: "message"; id: string; role: "user" | "assistant"; content: string }
+  | {
+      kind: "message";
+      id: string;
+      role: "user" | "assistant";
+      content: string;
+      /**
+       * How the player framed the turn (`say`/`act`/`continue`), for the action
+       * bubble styling and the text-free "continue" placeholder. Absent on
+       * narration and on transcript entries restored from persisted history.
+       */
+      actionKind?: ActionKind;
+    }
   | {
       kind: "roll-set";
       id: string;

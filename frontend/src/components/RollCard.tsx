@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import type { RollOutcome } from "../api";
+import type { RollOutcome } from "../api/types";
 import Die from "./Die";
 
 // Minimum time the die tumbles before the result is shown. Card-level only:

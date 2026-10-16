@@ -15,9 +15,11 @@ The streaming actions endpoint is implemented here in two seams:
   always emits exactly one terminal ``message``/``error`` frame, even when the
   client disconnects mid-stream — the turn still completes and persists.
 
-Both seams use the shared validation helpers, per-session locks, and bounded
-executor defined in :mod:`open_tavern.api.routes`. That import is deferred to
-call time because ``routes`` imports this module while loading.
+Both seams use the shared validation helpers in :mod:`open_tavern.api.guards`,
+the per-session locks and bounded executor in :mod:`open_tavern.api.runtime`,
+and the per-request client protocol in :mod:`open_tavern.api.llm`. Unlike the
+old ``routes`` module these have no import cycle with this module, so they are
+imported at module level.
 """
 
 from __future__ import annotations
@@ -27,19 +29,16 @@ import json
 from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
 from dataclasses import dataclass
-from types import ModuleType
-from typing import TYPE_CHECKING
 
 from fastapi import HTTPException, Request
 
+from open_tavern.api import guards, runtime
+from open_tavern.api.llm import ChatClient
 from open_tavern.api.ratelimit import RateLimiter
 from open_tavern.api.schemas import ActionResponse, roll_to_dict, state_to_dict
-from open_tavern.storage.db import Storage
+from open_tavern.storage import Storage
 from open_tavern.story import RollOutcome, TurnResult, turn
 from open_tavern.story.client import LLMClientError
-
-if TYPE_CHECKING:
-    from open_tavern.api.routes import ChatClient
 
 #: Detail sent for an unexpected failure in the turn task. Deliberately
 #: generic: the exception text can carry internal paths or payload fragments.
@@ -50,20 +49,6 @@ _INTERNAL_ERROR_DETAIL: str = "internal server error"
 #: reverse proxies from severing the stream mid-turn. SSE clients ignore
 #: comment-only frames.
 _KEEPALIVE_S: float = 15.0
-
-
-def _routes() -> ModuleType:
-    """Return the routes module, imported lazily.
-
-    ``routes`` imports this module at load time (it wires the actions
-    endpoint), so a module-level import here would create a cycle. The turn
-    path borrows routes' validation helpers, per-session locks, and bounded
-    LLM executor — they must be the same objects, so they are reached in place
-    rather than re-created.
-    """
-    from open_tavern.api import routes
-
-    return routes
 
 
 @dataclass(frozen=True)
@@ -78,6 +63,7 @@ class PreparedAction:
     action: str
     storage: Storage
     client: ChatClient
+    kind: str = "act"
 
 
 def persist_turn(
@@ -118,6 +104,7 @@ async def prepare_action(
     client: ChatClient,
     request: Request,
     limiter: RateLimiter,
+    kind: str = "act",
 ) -> PreparedAction:
     """Validate a turn request and reserve an executor slot for it.
 
@@ -126,20 +113,20 @@ async def prepare_action(
     violations (429), and executor saturation (503) all surface as plain HTTP
     status codes instead of a stream that starts and then dies.
     """
-    routes = _routes()
-    await asyncio.to_thread(routes._ensure_session, storage, session_id)
+    await asyncio.to_thread(guards.ensure_session, storage, session_id)
     # The limiter records every hit, so it runs before the character check:
     # requests rejected with 409 must still consume the window, or a flood
     # of them is unthrottled.
-    routes._enforce_rate_limit(request, limiter, "action")
-    await asyncio.to_thread(routes._require_character, storage, session_id)
-    if not routes._LLM_EXECUTOR_SLOTS.acquire(blocking=False):
+    guards.enforce_rate_limit(request, limiter, "action")
+    await asyncio.to_thread(guards.require_character, storage, session_id)
+    if not runtime._LLM_EXECUTOR_SLOTS.acquire(blocking=False):
         raise HTTPException(status_code=503, detail="server busy, try again shortly")
     return PreparedAction(
         session_id=session_id,
         action=action,
         storage=storage,
         client=client,
+        kind=kind,
     )
 
 
@@ -153,15 +140,15 @@ def _run_locked(
     pre-streaming implementation: state load, LLM turn, and atomic persistence
     so a crash cannot leave the state and the transcript diverging.
     """
-    routes = _routes()
-    with routes._session_lock_ctx(prepared.session_id):
+    with runtime.session_lock_ctx(prepared.session_id):
         # Re-check under the lock: a delete queued ahead of this action would
         # otherwise surface as 409 (missing character) instead of 404.
-        routes._ensure_session(prepared.storage, prepared.session_id)
-        character = routes._require_character(prepared.storage, prepared.session_id)
-        state = routes._current_state(prepared.storage, prepared.session_id, character)
+        guards.ensure_session(prepared.storage, prepared.session_id)
+        character = guards.require_character(prepared.storage, prepared.session_id)
+        state = runtime.current_state(prepared.storage, prepared.session_id, character)
         history = prepared.storage.load_messages(prepared.session_id)
         premise = prepared.storage.session_premise(prepared.session_id)
+        style = prepared.storage.session_dm_style(prepared.session_id)
 
         result = turn(
             prepared.action,
@@ -169,12 +156,14 @@ def _run_locked(
             history,
             prepared.client,
             premise=premise,
+            style=style,
+            kind=prepared.kind,
             on_rolls=on_rolls,
         )
         # State + both transcript messages commit as a single storage
         # transaction so a crash cannot leave state and transcript diverging.
         persist_turn(prepared.storage, prepared.session_id, prepared.action, result)
-        routes._cache_state(prepared.session_id, result.state)
+        runtime.cache_state(prepared.session_id, result.state)
     return result
 
 
@@ -191,7 +180,6 @@ def stream_action(prepared: PreparedAction) -> AsyncIterator[bytes]:
     disconnect) does not cancel the task: the turn always completes and
     persists, and a late frame put after the close is harmless.
     """
-    routes = _routes()
     loop = asyncio.get_running_loop()
     azq: asyncio.Queue[bytes | None] = asyncio.Queue()
 
@@ -225,7 +213,7 @@ def stream_action(prepared: PreparedAction) -> AsyncIterator[bytes]:
         else:
             _emit("message", _message_payload(result))
         finally:
-            routes._LLM_EXECUTOR_SLOTS.release()
+            runtime._LLM_EXECUTOR_SLOTS.release()
             _push(None)
 
     async def _frames() -> AsyncIterator[bytes]:
@@ -240,9 +228,9 @@ def stream_action(prepared: PreparedAction) -> AsyncIterator[bytes]:
             yield frame
 
     try:
-        routes._LLM_EXECUTOR.submit(_run)
+        runtime.LLM_EXECUTOR.submit(_run)
     except RuntimeError:  # executor already shut down
-        routes._LLM_EXECUTOR_SLOTS.release()
+        runtime._LLM_EXECUTOR_SLOTS.release()
         _push(_frame("error", {"detail": "server shutting down", "status": 503}))
         _push(None)
 

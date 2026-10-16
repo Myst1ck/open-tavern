@@ -3,18 +3,31 @@
 Origins come from ``OPEN_TAVERN_ALLOWED_ORIGINS`` (comma-separated) with a
 localhost-only default. Allowed origins receive CORS headers; disallowed
 origins get none. ``GET /sessions`` is used as the probe route — it is
-auth-exempt and needs no storage.
+auth-exempt; the probe tests back the app with an isolated in-memory store.
 """
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from open_tavern.api.main import _allowed_origins, create_app
+from open_tavern.api.runtime import get_storage
+from open_tavern.storage import Storage
 
 
-def _client() -> TestClient:
-    return TestClient(create_app())
+@pytest.fixture
+def storage() -> Storage:
+    store = Storage(":memory:")
+    store.init()
+    yield store
+    store.close()
+
+
+def _client(storage: Storage) -> TestClient:
+    app = create_app()
+    app.dependency_overrides[get_storage] = lambda: storage
+    return TestClient(app)
 
 
 def _get_with_origin(client: TestClient, origin: str):
@@ -49,9 +62,9 @@ def test_allowed_origins_drops_whitespace_entries(monkeypatch):
 # --- middleware behavior --------------------------------------------------
 
 
-def test_allowed_origin_gets_cors_headers(monkeypatch):
+def test_allowed_origin_gets_cors_headers(monkeypatch, storage):
     monkeypatch.delenv("OPEN_TAVERN_ALLOWED_ORIGINS", raising=False)
-    client = _client()
+    client = _client(storage)
 
     resp = _get_with_origin(client, "http://localhost:5173")
 
@@ -59,9 +72,9 @@ def test_allowed_origin_gets_cors_headers(monkeypatch):
     assert resp.headers.get("access-control-allow-origin") == "http://localhost:5173"
 
 
-def test_disallowed_origin_gets_no_cors_headers(monkeypatch):
+def test_disallowed_origin_gets_no_cors_headers(monkeypatch, storage):
     monkeypatch.delenv("OPEN_TAVERN_ALLOWED_ORIGINS", raising=False)
-    client = _client()
+    client = _client(storage)
 
     resp = _get_with_origin(client, "http://evil.example")
 
@@ -69,11 +82,11 @@ def test_disallowed_origin_gets_no_cors_headers(monkeypatch):
     assert "access-control-allow-origin" not in resp.headers
 
 
-def test_env_override_allows_only_configured_origins(monkeypatch):
+def test_env_override_allows_only_configured_origins(monkeypatch, storage):
     monkeypatch.setenv(
         "OPEN_TAVERN_ALLOWED_ORIGINS", "http://a.example,http://b.example"
     )
-    client = _client()
+    client = _client(storage)
 
     allowed = _get_with_origin(client, "http://a.example")
     assert allowed.headers.get("access-control-allow-origin") == "http://a.example"
@@ -85,9 +98,9 @@ def test_env_override_allows_only_configured_origins(monkeypatch):
     assert "access-control-allow-origin" not in denied.headers
 
 
-def test_preflight_allowed_origin_ok(monkeypatch):
+def test_preflight_allowed_origin_ok(monkeypatch, storage):
     monkeypatch.delenv("OPEN_TAVERN_ALLOWED_ORIGINS", raising=False)
-    client = _client()
+    client = _client(storage)
 
     resp = client.options(
         "/sessions",
@@ -101,9 +114,9 @@ def test_preflight_allowed_origin_ok(monkeypatch):
     assert resp.headers.get("access-control-allow-origin") == "http://localhost:5173"
 
 
-def test_preflight_enumerates_methods_and_headers(monkeypatch):
+def test_preflight_enumerates_methods_and_headers(monkeypatch, storage):
     monkeypatch.delenv("OPEN_TAVERN_ALLOWED_ORIGINS", raising=False)
-    client = _client()
+    client = _client(storage)
 
     resp = client.options(
         "/sessions",

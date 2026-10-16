@@ -16,9 +16,11 @@ import json
 
 from fastapi.testclient import TestClient
 
+from open_tavern.api.llm import get_client
 from open_tavern.api.main import create_app
-from open_tavern.api.routes import get_client, get_storage
+from open_tavern.api.runtime import get_storage
 from open_tavern.storage import Storage
+from open_tavern.story.style import TONES
 
 #: Raw character sheet the fake LLM returns for generation. Derived values
 #: (modifiers, proficiency bonus, HP) are computed by code, never trusted here.
@@ -93,11 +95,26 @@ def test_full_flow_end_to_end() -> None:
         app.dependency_overrides[get_client] = lambda: fake
         client = TestClient(app)
 
-        # 1. Create a session.
-        resp = client.post("/sessions", json={"world_theme": "a haunted tavern"})
+        # 1. Create a session with a DM narration style.
+        resp = client.post(
+            "/sessions",
+            json={
+                "world_theme": "a haunted tavern",
+                "dm_style": {
+                    "tone": "gritty",
+                    "verbosity": "concise",
+                    "custom_tone": "speak like a sea dog",
+                },
+            },
+        )
         assert resp.status_code == 201
         session_id = resp.json()["session_id"]
         assert session_id
+        assert resp.json()["dm_style"] == {
+            "tone": "gritty",
+            "verbosity": "concise",
+            "custom_tone": "speak like a sea dog",
+        }
 
         # 2. Generate a character from a free-text description.
         resp = client.post(
@@ -117,6 +134,11 @@ def test_full_flow_end_to_end() -> None:
         )
         assert resp.status_code == 200
         assert resp.headers["content-type"].startswith("text/event-stream")
+
+        # The DM narration style reaches the GM system prompt.
+        gm_system = fake.calls[1][0]["content"]
+        assert TONES["gritty"] in gm_system
+        assert "speak like a sea dog" in gm_system
 
         # Frames: the resolved check streams first, then the terminal message.
         frames = _parse_sse(resp.text)

@@ -6,7 +6,8 @@ import {
   useState,
 } from "react";
 
-import { type GameState, sendAction } from "./api";
+import { sendAction } from "./api/turn";
+import type { ActionKind, GameState } from "./api/types";
 import { newEntryId, type TranscriptEntry } from "./transcript";
 
 interface TurnStreamOptions {
@@ -21,7 +22,7 @@ interface TurnStreamOptions {
 export interface TurnStream {
   /** Roll cards already revealed in the active set (0 = only the first is up). */
   revealCount: number;
-  send: (sessionId: string, action: string) => void;
+  send: (sessionId: string, action: string, kind?: ActionKind) => void;
   /** RollCard callback: a card finished its reveal animation. */
   onRollRevealed: (rollSetId: string, index: number) => void;
   /** Abandon an in-flight turn (leaving play) and drop its pending state. */
@@ -128,7 +129,7 @@ export function useTurnStream({
   }, [clearActiveSet, setBusy]);
 
   const send = useCallback(
-    (sessionId: string, action: string) => {
+    (sessionId: string, action: string, kind: ActionKind = "act") => {
       if (streamingRef.current) {
         return;
       }
@@ -142,12 +143,18 @@ export function useTurnStream({
       const playerId = newEntryId();
       setEntries((prev) => [
         ...prev,
-        { kind: "message", id: playerId, role: "user", content: action },
+        {
+          kind: "message",
+          id: playerId,
+          role: "user",
+          content: action,
+          actionKind: kind,
+        },
       ]);
 
       void (async () => {
         try {
-          const response = await sendAction(sessionId, action, (rolls) => {
+          const response = await sendAction(sessionId, action, kind, (rolls) => {
             if (epoch !== epochRef.current || rolls.length === 0) {
               return;
             }

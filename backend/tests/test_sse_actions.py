@@ -17,10 +17,11 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
-from open_tavern.api import routes, turn_stream
+from open_tavern.api import runtime, turn_stream
+from open_tavern.api.llm import get_client
 from open_tavern.api.main import create_app
 from open_tavern.api.ratelimit import RateLimiter
-from open_tavern.api.routes import get_client, get_storage
+from open_tavern.api.runtime import get_storage
 from open_tavern.character.models import AbilityScores, CharacterSheet
 from open_tavern.storage import Storage
 from open_tavern.story.client import LLMClientError
@@ -208,7 +209,7 @@ def test_idle_stream_emits_keepalive_comment_frames(storage, monkeypatch):
 def test_executor_slot_released_when_stream_is_never_read(storage, monkeypatch):
     """A stream the client never reads must still release its executor slot."""
     single = threading.BoundedSemaphore(1)
-    monkeypatch.setattr(routes, "_LLM_EXECUTOR_SLOTS", single)
+    monkeypatch.setattr(runtime, "_LLM_EXECUTOR_SLOTS", single)
     fake = _ScriptedClient(["You swing. [CHECK:strength DC12]", "You strike true."])
     session_id = _seed_character(storage)
     request = Request(

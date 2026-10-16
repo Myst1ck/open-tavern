@@ -11,7 +11,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from open_tavern.api.main import create_app
-from open_tavern.api.routes import get_client, get_storage
+from open_tavern.api.llm import get_client
+from open_tavern.api.runtime import get_storage
 from open_tavern.character.models import AbilityScores, CharacterSheet
 from open_tavern.storage import Storage
 
@@ -147,6 +148,22 @@ def test_action_409_rejections_still_consume_the_rate_window(storage):
     resp = client.post(
         f"/sessions/{session_id}/actions", json={"action": "look around"}
     )
+
+    assert resp.status_code == 429
+    assert resp.json()["detail"] == "rate limit exceeded"
+
+
+def test_rate_limit_hits_before_session_existence_probe(storage):
+    client = _client(storage)
+    url = "/sessions/missing/characters/char-1/items"
+
+    # The item limiter is consumed even for unknown sessions, and exhaustion
+    # answers 429 instead of leaking a 404 existence oracle.
+    for _ in range(30):
+        resp = client.post(url, json={"name": "rock"})
+        assert resp.status_code == 404
+
+    resp = client.post(url, json={"name": "rock"})
 
     assert resp.status_code == 429
     assert resp.json()["detail"] == "rate limit exceeded"
