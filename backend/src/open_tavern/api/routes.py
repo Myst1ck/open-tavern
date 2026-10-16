@@ -19,14 +19,13 @@ from dataclasses import replace
 from functools import lru_cache
 from typing import Protocol
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 
 from open_tavern.api import turn_stream
 from open_tavern.api.ratelimit import RateLimiter
 from open_tavern.api.schemas import (
     ActionRequest,
-    ActionResponse,
     CharacterRequest,
     CharacterResponse,
     ClassRequest,
@@ -561,7 +560,16 @@ async def refine_character(
 
 @router.post(
     "/sessions/{session_id}/actions",
-    response_model=ActionResponse,
+    response_class=Response,
+    responses={
+        200: {
+            "description": (
+                "SSE stream: roll frames, then exactly one terminal "
+                "message or error frame."
+            ),
+            "content": {"text/event-stream": {"schema": {"type": "string"}}},
+        }
+    },
 )
 async def send_action(
     session_id: str,
