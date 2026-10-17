@@ -53,4 +53,3 @@ def test_openai_request_503_without_key(monkeypatch, storage):
     resp = client.post("/sessions/any/character", json={"description": "elf"})
 
     assert resp.status_code == 503
-    assert "OPENAI_API_KEY" in resp.json()["detail"]

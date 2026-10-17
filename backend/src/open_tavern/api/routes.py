@@ -59,7 +59,7 @@ from open_tavern.story import (
     turn,
 )
 from open_tavern.story.character_gen import _parse_json
-from open_tavern.story.client import LLMClientError
+from open_tavern.story.client import LLMClientError, is_local_base_url
 from open_tavern.story.prompts import world_gen_prompt
 from open_tavern.story.refine import refine_prose
 
@@ -120,18 +120,27 @@ def get_per_request_client(
     back to ``OPENAI_BASE_URL``. Without any recognized header the shared
     environment client (or its dependency-override test fake) is used unchanged.
 
-    Raises ``HTTPException`` 503 when the resolved client is a real
-    :class:`OpenAIClient` with no API key — the app starts without a key, so
-    only OpenAI-dependent requests fail until one is configured.
+    The API key is optional: the Settings menu is the intended source, and the
+    ``OPENAI_API_KEY`` env var is only a fallback. A real :class:`OpenAIClient`
+    with no key is allowed through when its base URL is loopback/private (a
+    keyless local model such as Ollama); otherwise the request fails 503 with a
+    message pointing at the Settings menu rather than the env var.
     """
     if not (x_api_key or x_model or x_base_url):
         client: ChatClient = env_client
     else:
         client = build_client_from_headers(x_api_key, x_model, x_base_url)
-    if isinstance(client, OpenAIClient) and not client.api_key.strip():
+    if (
+        isinstance(client, OpenAIClient)
+        and not client.api_key.strip()
+        and not is_local_base_url(client.base_url)
+    ):
         raise HTTPException(
             status_code=503,
-            detail="OPENAI_API_KEY not configured",
+            detail=(
+                "No API key configured. Add one in the Settings menu "
+                "(⚙ Settings), or set a local Base URL for a keyless model."
+            ),
         )
     return client
 

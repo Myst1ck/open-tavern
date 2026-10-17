@@ -31,7 +31,7 @@ Note: no root `/` API route — `/` on :8000 returns 404 by design. Use `/sessio
 
 | Variable           | Default                    | Required | Description                        |
 |--------------------|----------------------------|----------|------------------------------------|
-| `OPENAI_API_KEY`   | —                          | no       | OpenAI-compatible API key. Optional — app starts without it; AI calls return 503 until set (env or app config) |
+| `OPENAI_API_KEY`   | —                          | no       | OpenAI-compatible API key. Optional — app starts without it; AI calls return 503 until set (env or app config), except for keyless local models (a loopback/private Base URL such as Ollama needs no key) |
 | `OPENAI_BASE_URL`  | `https://api.openai.com/v1`| no       | Provider base URL. Env-only — `X-Base-URL` header removed, not honored |
 | `OPENAI_MODEL`     | `gpt-4o-mini`              | no       | Model to call                      |
 | `OPEN_TAVERN_DB`   | `open_tavern.db`           | no       | SQLite file path (relative to cwd) |
@@ -45,7 +45,7 @@ Note: no root `/` API route — `/` on :8000 returns 404 by design. Use `/sessio
 |----------------------|----------------------------|----------|-------------------------|
 | `VITE_API_BASE_URL` | `""` (same-origin)         | no       | Backend base URL. Default empty → requests go to the page origin and Vite proxies `/sessions` + `/world` to `http://127.0.0.1:8000`. Override only for non-proxied setups. Key present in `.env.example` as commented-out line |
 
-Backend has no `.env` file — export vars or run with env. `OPENAI_API_KEY` optional — app boots without it; AI features (character generation, GM narration) fail with 503 until key set via env or app config. Note: `podman-compose` reads a root `.env` for variable interpolation — that is compose-level, not a backend loader.
+Backend has no `.env` file — export vars or run with env. `OPENAI_API_KEY` optional — app boots without it; AI features (character generation, GM narration) fail with 503 until key set via env or app config (Settings menu). A loopback/private Base URL (keyless local model, e.g. Ollama `http://localhost:11434/v1`) needs no key. Note: `podman-compose` reads a root `.env` for variable interpolation — that is compose-level, not a backend loader.
 
 ## Install
 
