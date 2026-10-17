@@ -75,6 +75,20 @@ cd frontend
 npm run dev -- --host 0.0.0.0 --port 5173
 ```
 
+Note: read the root `.env` before starting the backend (`set -a; source .env;
+set +a`) — it carries `OPENAI_BASE_URL` and friends; the backend has no `.env`
+loader.
+
+On brain both services run as systemd user units, enabled at login
+(`systemctl --user status open-tavern-backend open-tavern-dev`):
+
+- `open-tavern-backend.service` — uvicorn :8000, loads root `.env` via
+  `EnvironmentFile`, `Restart=on-failure`.
+- `open-tavern-dev.service` — vite :5173.
+
+Restart one with `systemctl --user restart <unit>`. Do not run a second copy on
+the same port.
+
 **No auth needed.** Backend binds loopback (`127.0.0.1`). The Vite dev server
 proxies `/sessions` and `/world` to the backend, so the browser only ever talks
 to the frontend origin. Do not bind the backend to `0.0.0.0` — that would expose
