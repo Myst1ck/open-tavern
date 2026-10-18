@@ -45,7 +45,7 @@ Note: no root `/` API route — `/` on :8000 returns 404 by design. Use `/sessio
 | ------------------- | ------------------ | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `VITE_API_BASE_URL` | `""` (same-origin) | no       | Backend base URL. Default empty → requests go to the page origin and Vite proxies `/sessions` + `/world` (and `/tavern/*` variants) to `http://127.0.0.1:8000`. Override only for non-proxied setups. Key present in `.env.example` as commented-out line |
 
-Backend has no `.env` file — export vars or run with env. `OPENAI_API_KEY` optional — app boots without it; AI features (character generation, GM narration) fail with 503 until key set via env or app config. Note: `podman-compose` reads a root `.env` for variable interpolation — that is compose-level, not a backend loader.
+Backend has no `.env` file — export vars or run with env. `OPENAI_API_KEY` optional — app boots without it; AI features (character generation, GM narration) fail with 503 until key set via env or app config (Settings menu). A loopback/private Base URL (keyless local model, e.g. Ollama `http://localhost:11434/v1`) needs no key. Note: `podman-compose` reads a root `.env` for variable interpolation — that is compose-level, not a backend loader.
 
 ## Install
 
@@ -77,6 +77,16 @@ npm run dev -- --host 0.0.0.0 --port 5173
 # app URL: http://localhost:5173/tavern/ — Vite base defaults to /tavern/ (VITE_BASE override);
 # GET / on :5173 redirects (302) to /tavern/
 ```
+
+On brain both services run as systemd user units, enabled at login
+(`systemctl --user status open-tavern-backend open-tavern-dev`):
+
+- `open-tavern-backend.service` — uvicorn :8000, loads root `.env` via
+  `EnvironmentFile`, `Restart=on-failure`.
+- `open-tavern-dev.service` — vite :5173.
+
+Restart one with `systemctl --user restart <unit>`. Do not run a second copy on
+the same port.
 
 **No auth needed.** Backend binds loopback (`127.0.0.1`). The Vite dev server
 proxies `/sessions`, `/world`, and their `/tavern/*` variants to the backend, so the browser only ever talks

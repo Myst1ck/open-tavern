@@ -193,10 +193,11 @@ class OpenAIClient:
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
 
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
+        headers = {"Content-Type": "application/json"}
+        if self.api_key.strip():
+            # Keyless local model servers expect no Authorization header;
+            # httpx also rejects the trailing space of a bare "Bearer ".
+            headers["Authorization"] = f"Bearer {self.api_key}"
         try:
             # Re-validate before sending: DNS may now resolve to a blocked
             # address that was not there at construction time.

@@ -15,7 +15,7 @@ import pytest
 
 import open_tavern.story.client as client_module
 from open_tavern.story import OpenAIClient
-from open_tavern.story.client import LLMClientError
+from open_tavern.story.client import LLMClientError, is_local_base_url
 
 
 def _client_with_transport(handler, monkeypatch) -> OpenAIClient:
@@ -123,6 +123,8 @@ def test_chat_revalidates_host_and_refuses_newly_blocked_address(monkeypatch):
 
     with pytest.raises(LLMClientError, match="not allowed"):
         client.chat([{"role": "user", "content": "hi"}])
+
+
 def test_base_url_bare_openrouter_host_maps_to_api_root():
     client = OpenAIClient(api_key="test-key", base_url="https://openrouter.ai")
 
@@ -164,3 +166,34 @@ def test_chat_targets_openrouter_api_root(monkeypatch):
     client.chat([{"role": "user", "content": "hi"}])
 
     assert captured["url"] == "https://openrouter.ai/api/v1/chat/completions"
+
+
+def test_is_local_base_url_loopback_and_private_hosts():
+    assert is_local_base_url("http://localhost:11434/v1")
+    assert is_local_base_url("http://127.0.0.1:11434/v1")
+    assert is_local_base_url("http://10.0.0.5/v1")
+
+
+def test_is_local_base_url_remote_and_unparseable_hosts():
+    assert not is_local_base_url("https://api.openai.com/v1")
+    assert not is_local_base_url("https://openrouter.ai/api/v1")
+    assert not is_local_base_url("not-a-url")
+
+
+def test_chat_omits_authorization_for_keyless_local_client(monkeypatch):
+    captured: dict = {}
+
+    def handler(request):
+        captured["headers"] = dict(request.headers)
+        return _ok_response()
+
+    monkeypatch.setattr(
+        client_module,
+        "_HTTP_CLIENT",
+        httpx.Client(transport=httpx.MockTransport(handler), timeout=60.0),
+    )
+    client = OpenAIClient(api_key="", base_url="http://127.0.0.1:11500/v1")
+
+    client.chat([{"role": "user", "content": "hi"}])
+
+    assert "authorization" not in captured["headers"]
