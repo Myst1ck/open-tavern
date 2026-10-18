@@ -12,6 +12,7 @@ all dice math.
 from __future__ import annotations
 
 import random
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 
 from open_tavern.character.items import BaseType, Item
@@ -39,6 +40,7 @@ from open_tavern.story.prompts import (
     roll_result_prompt,
     user_action_prompt,
 )
+from open_tavern.story.style import DmStyle
 
 DEFAULT_WORLD_THEME: str = "a classic D&D fantasy world"
 
@@ -48,10 +50,15 @@ _MAX_HISTORY_MESSAGES: int = 20
 
 
 def _recent_history(history: list[dict[str, str]], limit: int) -> list[dict[str, str]]:
-    """Return at most the last ``limit`` messages, preserving order."""
-    if len(history) <= limit:
-        return history
-    return history[-limit:]
+    """Return at most the last ``limit`` messages, preserving order.
+
+    Each message is projected to its ``role``/``content`` pair so that
+    engine-only keys (e.g. persisted ``rolls``) never reach the LLM payload.
+    """
+    return [
+        {"role": message["role"], "content": message["content"]}
+        for message in history[-limit:]
+    ]
 
 
 @dataclass(frozen=True)
@@ -85,17 +92,30 @@ def turn(
     client,
     rng: random.Random | None = None,
     premise: str | None = None,
+    on_rolls: Callable[[tuple[RollOutcome, ...]], None] | None = None,
+    style: DmStyle | None = None,
+    *,
+    kind: str = "act",
 ) -> TurnResult:
     """Process one player ``action`` against ``state`` and return a result.
 
     ``history`` is a read-only list of ``{"role", "content"}`` messages. The
     caller appends the player action and final narration after this returns.
+
+    ``on_rolls``, when supplied, is called exactly once per turn with the
+    resolved check outcomes — immediately after the first (check-resolving)
+    action pass and before the second narration call is issued. It fires with
+    an empty tuple on turns that resolve no checks. Callers use it to stream
+    results while phase 2 is still pending.
+
+    ``kind`` selects the player mode ("say", "act", or "continue"); it frames
+    the player message for the GM and is not persisted.
     """
-    system = _build_system_prompt(state, premise=premise)
+    system = _build_system_prompt(state, premise=premise, style=style)
     messages: list[dict[str, str]] = [
         {"role": "system", "content": system},
         *_recent_history(history, _MAX_HISTORY_MESSAGES),
-        {"role": "user", "content": user_action_prompt(action)},
+        {"role": "user", "content": user_action_prompt(action, kind)},
     ]
 
     first = client.chat(messages)
@@ -103,6 +123,8 @@ def turn(
     state, rolls, had_check = _apply_actions(
         state, first_parsed.actions, state.character, rng, allow_checks=True
     )
+    if on_rolls is not None:
+        on_rolls(tuple(rolls))
 
     if not had_check:
         return TurnResult(
@@ -131,10 +153,14 @@ def turn(
     )
 
 
-def _build_system_prompt(state: GameState, premise: str | None = None) -> str:
+def _build_system_prompt(
+    state: GameState, premise: str | None = None, style: DmStyle | None = None
+) -> str:
     """Build the GM system prompt, reflecting the live hit-point total."""
     live_character = replace(state.character, hp=state.current_hp)
-    return gm_system_prompt(live_character, DEFAULT_WORLD_THEME, premise=premise)
+    return gm_system_prompt(
+        live_character, DEFAULT_WORLD_THEME, premise=premise, style=style
+    )
 
 
 def _apply_actions(
@@ -159,7 +185,10 @@ def _apply_actions(
                 damage = roll_expression(action.dice, rng=rng)
             except ValueError:
                 continue
-            state = apply_hp(state, -damage)
+            # A net-negative total (``1d6-100``) would otherwise heal: the
+            # delta below is negated before it reaches ``apply_hp``. Damage
+            # never restores HP — ``[HP:+n]`` is the healing tag.
+            state = apply_hp(state, -max(damage, 0))
         elif isinstance(action, HpAction):
             state = apply_hp(state, action.delta)
         elif isinstance(action, ItemAction):

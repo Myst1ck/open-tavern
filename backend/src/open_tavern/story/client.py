@@ -58,10 +58,14 @@ def _validate_base_url(url: str) -> None:
 
     Requires an ``http``/``https`` scheme and blocks link-local/reserved IP
     literals (notably cloud metadata ``169.254.169.254``), including their
-    IPv4-mapped IPv6 forms. Hostnames are resolved now and every resolved
-    address is checked, closing static DNS-rebinding (a hostile DNS server
-    could still rebind after this check — see the residual TOCTOU note).
-    Private and loopback ranges are intentionally allowed so local models
+    IPv4-mapped IPv6 forms. Hostnames are resolved and every resolved address
+    is checked, closing static DNS-rebinding. ``OpenAIClient.chat`` re-runs
+    this check before every request, so a host that only starts resolving to
+    a blocked address later is still refused (a hostile DNS server could
+    still rebind between the check and the send — that residual TOCTOU would
+    require pinning resolved IPs inside the HTTP transport to close).
+    Unresolvable hosts pass: the send would fail on DNS anyway. Private and
+    loopback ranges are intentionally allowed so local models
     keep working. Raises ``ValueError`` for anything rejected.
     """
     try:
@@ -77,7 +81,7 @@ def _validate_base_url(url: str) -> None:
         try:
             infos = socket.getaddrinfo(parts.hostname, None)
         except OSError:
-            return  # unresolvable — allow; revalidated at request time
+            return  # unresolvable — allow; chat() re-checks before each send
         for info in infos:
             if _check_ip(ipaddress.ip_address(info[4][0])):
                 raise ValueError(
@@ -195,6 +199,9 @@ class OpenAIClient:
             # httpx also rejects the trailing space of a bare "Bearer ".
             headers["Authorization"] = f"Bearer {self.api_key}"
         try:
+            # Re-validate before sending: DNS may now resolve to a blocked
+            # address that was not there at construction time.
+            _validate_base_url(self.base_url)
             response = _HTTP_CLIENT.post(
                 f"{self.base_url}/chat/completions",
                 json=payload,

@@ -21,6 +21,7 @@ from open_tavern.story.prompts import (
     class_gen_prompt,
     structured_character_gen_prompt,
 )
+from open_tavern.story.style import DmStyle
 
 
 class CharacterGenerationError(ValueError):
@@ -67,6 +68,7 @@ def generate_character(
     class_hit_die: int | None = None,
     class_description: str = "",
     premise: str | None = None,
+    style: DmStyle | None = None,
 ) -> tuple[CharacterSheet, str, str]:
     """Generate a validated, normalized :class:`CharacterSheet`.
 
@@ -104,9 +106,10 @@ def generate_character(
             motivation=motivation,
             description=description,
             premise=premise,
+            style=style,
         )
     else:
-        prompt = character_gen_prompt(description, premise=premise)
+        prompt = character_gen_prompt(description, premise=premise, style=style)
     text = client.chat([{"role": "user", "content": prompt}], json_mode=True)
     data = _parse_json(text)
     _apply_class_override(data, class_name, class_hit_die, class_description)

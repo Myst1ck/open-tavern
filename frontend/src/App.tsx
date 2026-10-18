@@ -1,40 +1,53 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
-  type CharacterSheet,
-  createSession,
   deleteItem,
-  deleteSession,
   equipItem,
-  type GameState,
-  getSession,
-  getState,
-  type Item,
-  listSessions,
-  loadSettings,
-  renameSession,
-  saveSettings,
-  sendAction,
-  type Session,
-  type SessionSummary,
-  type TavernSettings,
   unequipItem,
   useItem as callUseItem,
-} from "./api";
+} from "./api/items";
+import {
+  createSession,
+  deleteSession,
+  getSession,
+  getState,
+  listSessions,
+  renameSession,
+} from "./api/sessions";
+import {
+  loadSettings,
+  saveSettings,
+  type TavernSettings,
+} from "./api/settings";
+import { DEFAULT_DM_STYLE } from "./api/style";
+import {
+  type ActionKind,
+  type CharacterSheet,
+  type ChatMessage,
+  type DmStyle,
+  type GameState,
+  type Item,
+  type Session,
+  type SessionSummary,
+} from "./api/types";
 import CharacterCreationView from "./components/CharacterCreationView";
 import CharacterSheetView from "./components/CharacterSheet";
-import Chat, { type Message } from "./components/Chat";
+import Chat from "./components/Chat";
 import CreateTaleCard from "./components/CreateTaleCard";
+import DmStylePanel from "./components/DmStylePanel";
 import FilterBar, { type FilterState } from "./components/FilterBar";
 import InstallButton from "./components/InstallButton";
 import InventoryGrid from "./components/InventoryGrid";
 import ItemModal from "./components/ItemModal";
 import ItemTooltip from "./components/ItemTooltip";
+import PlayTabs, { type PlayTabId } from "./components/PlayTabs";
 import SavedTalesList from "./components/SavedTalesList";
 import SettingsPanel from "./components/SettingsPanel";
 import StateView from "./components/StateView";
 import UpdateToast from "./components/UpdateToast";
 import WorldGenView from "./components/WorldGenView";
+import { newEntryId, type TranscriptEntry } from "./transcript";
+import { useTurnStream } from "./useTurnStream";
 
 type Phase = "home" | "worldgen" | "character" | "play";
 
@@ -42,19 +55,29 @@ function toMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function newId(): string {
-  if (
-    typeof crypto !== "undefined" &&
-    typeof crypto.randomUUID === "function"
-  ) {
-    return crypto.randomUUID();
+/**
+ * Map the persisted transcript onto UI entries: an assistant turn's saved rolls
+ * become a static, already-revealed roll set placed before its narration.
+ */
+function toTranscriptEntries(messages: ChatMessage[]): TranscriptEntry[] {
+  const entries: TranscriptEntry[] = [];
+  for (const message of messages) {
+    if (message.rolls !== undefined && message.rolls.length > 0) {
+      entries.push({
+        kind: "roll-set",
+        id: newEntryId(),
+        rolls: message.rolls,
+        state: "revealed",
+      });
+    }
+    entries.push({
+      kind: "message",
+      id: newEntryId(),
+      role: message.role,
+      content: message.content,
+    });
   }
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-}
-
-/** Backend persists transcript roles as "user"/"assistant"; normalize for the UI. */
-function toUiRole(role: string): "player" | "gm" {
-  return role === "user" || role === "player" ? "player" : "gm";
+  return entries;
 }
 
 /** Guard: a resumed session without a character arrives as an empty object. */
@@ -74,16 +97,25 @@ interface InventoryPanelProps {
  * subtree, not the whole play view (Chat, StateView, ...).
  */
 function InventoryPanel({ items, onItemClick }: InventoryPanelProps) {
-  const [hoveredItem, setHoveredItem] = useState<Item | null>(null);
+  const [hovered, setHovered] = useState<{
+    item: Item;
+    point?: { x: number; y: number };
+  } | null>(null);
   return (
     <>
       <InventoryGrid
         items={items}
         onItemClick={onItemClick}
-        onItemHover={setHoveredItem}
+        onItemHover={(item, point) =>
+          setHovered(item !== null ? { item, point } : null)
+        }
       />
-      {hoveredItem !== null && (
-        <ItemTooltip item={hoveredItem} visible={true} />
+      {hovered !== null && (
+        <ItemTooltip
+          item={hovered.item}
+          visible={true}
+          position={hovered.point}
+        />
       )}
     </>
   );
@@ -92,9 +124,10 @@ function InventoryPanel({ items, onItemClick }: InventoryPanelProps) {
 export default function App() {
   const [phase, setPhase] = useState<Phase>("home");
   const [session, setSession] = useState<Session | null>(null);
+  const [dmStyle, setDmStyle] = useState<DmStyle>(DEFAULT_DM_STYLE);
   const [character, setCharacter] = useState<CharacterSheet | null>(null);
   const [state, setState] = useState<GameState | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [entries, setEntries] = useState<TranscriptEntry[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [settings, setSettings] = useState<TavernSettings>(loadSettings);
@@ -107,6 +140,19 @@ export default function App() {
   });
   const [selectedItem, setSelectedItem] = useState<Item | null>(null);
   const [itemBusy, setItemBusy] = useState(false);
+  const [playTab, setPlayTab] = useState<PlayTabId>("campaign");
+
+  const handleTurnComplete = useCallback((next: GameState) => {
+    setState(next);
+    setCharacter(next.character);
+  }, []);
+
+  const turn = useTurnStream({
+    setEntries,
+    setBusy,
+    setError,
+    onTurnComplete: handleTurnComplete,
+  });
 
   const refreshSessions = async () => {
     setSessionsBusy(true);
@@ -160,7 +206,9 @@ export default function App() {
 
   const handleItemAction = useCallback(
     async (action: string, item: Item) => {
-      if (!session || !character || itemBusy) return;
+      // ``busy`` too: an item mutation mid-turn would race the state snapshot
+      // the turn response is about to write.
+      if (!session || !character || busy || itemBusy) return;
       setItemBusy(true);
       try {
         const charId = session.session_id;
@@ -187,6 +235,9 @@ export default function App() {
           setCharacter(fresh.state.character);
           // Close only on success; a failed action keeps the modal open.
           setSelectedItem(null);
+        } else {
+          // A 200 with success: false still carries a reason; surface it.
+          setError(res.message !== "" ? res.message : "Item action failed");
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Item action failed");
@@ -194,7 +245,7 @@ export default function App() {
         setItemBusy(false);
       }
     },
-    [session, character, itemBusy],
+    [session, character, busy, itemBusy],
   );
 
   const handleSaveSettings = (next: TavernSettings) => {
@@ -202,16 +253,26 @@ export default function App() {
     setSettings(next);
   };
 
-  const handleStart = async (worldTheme: string, premise: string) => {
+  const handleStart = async (
+    worldTheme: string,
+    premise: string,
+    style: DmStyle,
+  ) => {
     setBusy(true);
     setError(null);
     try {
-      const created = await createSession(worldTheme, undefined, premise);
+      const created = await createSession(
+        worldTheme,
+        undefined,
+        premise,
+        style,
+      );
       setSession(created);
       // A fresh session resets any character progress from a prior world.
       setCharacter(null);
       setState(null);
-      setMessages([]);
+      setEntries([]);
+      setDmStyle(style);
       setPhase("character");
     } catch (err) {
       setError(toMessage(err));
@@ -225,7 +286,7 @@ export default function App() {
     setSession(null);
     setCharacter(null);
     setState(null);
-    setMessages([]);
+    setEntries([]);
     setError(null);
     setPhase("worldgen");
   };
@@ -235,7 +296,7 @@ export default function App() {
     setSession(null);
     setCharacter(null);
     setState(null);
-    setMessages([]);
+    setEntries([]);
     setError(null);
     setPhase("home");
   };
@@ -244,27 +305,31 @@ export default function App() {
     if (session === null) {
       return;
     }
+    // Hold the busy flag across the load so a player turn cannot be sent (and
+    // then wiped by the persisted transcript) while it is still arriving.
+    setBusy(true);
     setCharacter(character);
+    setPlayTab("campaign");
     setPhase("play");
-    const fallback: Message = {
-      id: newId(),
-      role: "gm",
+    const fallback: TranscriptEntry = {
+      kind: "message",
+      id: newEntryId(),
+      role: "assistant",
       content: `The door creaks open. You are ${character.name}, and a story in ${session.world_theme} begins.`,
-      rolls: [],
     };
     try {
       const detail = await getSession(session.session_id);
-      const persisted: Message[] = detail.messages.map((message) => ({
-        id: newId(),
-        role: toUiRole(message.role),
-        content: message.content,
-        rolls: [],
-      }));
+      const persisted = toTranscriptEntries(detail.messages);
       // The backend already persists the AI opening as the first assistant
       // message; only fall back to a default line when no opening was saved.
-      setMessages(persisted.length > 0 ? persisted : [fallback]);
-    } catch {
-      setMessages([fallback]);
+      setEntries(persisted.length > 0 ? persisted : [fallback]);
+    } catch (err) {
+      // The opening is persisted server-side; say so rather than silently
+      // showing a line the transcript does not contain.
+      setEntries([fallback]);
+      setError(`Could not load the transcript: ${toMessage(err)}`);
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -282,19 +347,18 @@ export default function App() {
       setSession({
         session_id: detail.meta.id,
         world_theme: detail.meta.world_theme,
+        dm_style: detail.dm_style,
       });
       setCharacter(character);
       setState(character !== null ? detail.state : null);
+      setDmStyle(detail.dm_style ?? DEFAULT_DM_STYLE);
       // Persisted transcript as-is; the AI opening is already the first
-      // assistant message. No synthetic intro is injected here.
-      const persisted: Message[] = detail.messages.map((message) => ({
-        id: newId(),
-        role: toUiRole(message.role),
-        content: message.content,
-        rolls: [],
-      }));
-      setMessages(persisted);
-      setPhase("play");
+      // assistant message. No synthetic intro is injected here. Saved turn
+      // rolls come back as static, already-revealed roll sets.
+      setEntries(toTranscriptEntries(detail.messages));
+      setPlayTab("campaign");
+      // A session without a character has no play view to land in.
+      setPhase(character !== null ? "play" : "character");
     } catch (err) {
       setError(toMessage(err));
     } finally {
@@ -321,48 +385,32 @@ export default function App() {
   };
 
   const handleBackToHome = () => {
-    // State already saved server-side on every action; just leave play.
+    // State already saved server-side on every action; just leave play. An
+    // in-flight turn (e.g. mid-reveal) is abandoned, not awaited.
+    turn.reset();
     setSession(null);
     setCharacter(null);
     setState(null);
-    setMessages([]);
+    setEntries([]);
     setError(null);
+    setPlayTab("campaign");
     setPhase("home");
     void refreshSessions();
   };
 
-  const handleSendAction = async (action: string) => {
-    if (session === null || busy) {
+  /**
+   * Hand one player turn to the stream driver: it appends the optimistic player
+   * entry, renders the streamed roll set, and reveals the buffered narration
+   * once every card has landed. The `kind` frames the action for the backend and
+   * styles the player bubble.
+   */
+  const handleSendAction = (action: string, kind: ActionKind) => {
+    // A turn sent while an item mutation is in flight would persist state
+    // computed before that mutation committed.
+    if (session === null || busy || itemBusy) {
       return;
     }
-    setBusy(true);
-    setError(null);
-    const playerMessage: Message = {
-      id: newId(),
-      role: "player",
-      content: action,
-      rolls: [],
-    };
-    setMessages((prev) => [...prev, playerMessage]);
-    try {
-      const response = await sendAction(session.session_id, action);
-      const gmMessage: Message = {
-        id: newId(),
-        role: "gm",
-        content: response.narration,
-        rolls: response.rolls,
-      };
-      setMessages((prev) => [...prev, gmMessage]);
-      setState(response.state);
-      setCharacter(response.state.character);
-    } catch (err) {
-      // Roll back the optimistic player message so a failed action does not
-      // leave a dangling turn in the transcript.
-      setMessages((prev) => prev.filter((m) => m.id !== playerMessage.id));
-      setError(toMessage(err));
-    } finally {
-      setBusy(false);
-    }
+    turn.send(session.session_id, action, kind);
   };
 
   return (
@@ -406,28 +454,59 @@ export default function App() {
             onBack={handleBackToWorldGen}
           />
         )}
-        {phase === "play" && (
+        {phase === "play" && session !== null && (
           <>
-            <button
-              type="button"
-              className="back-button"
-              onClick={handleBackToHome}
-            >
-              ← Back to tales
-            </button>
-            <div className="play-grid">
-              <Chat
-                messages={messages}
-                busy={busy}
-                error={error}
-                onSend={handleSendAction}
-              />
-              <aside className="play-sidebar">
-                <StateView state={state} />
-                {character !== null && (
-                  <CharacterSheetView character={character} />
-                )}
-                {character !== null && character.inventory.length > 0 && (
+            <div className="play-topbar">
+              <button
+                type="button"
+                className="back-button play-back"
+                aria-label="Back to tales"
+                title="Back to tales"
+                onClick={handleBackToHome}
+                disabled={busy}
+              >
+                ← Tales
+              </button>
+              <PlayTabs active={playTab} onChange={setPlayTab} />
+            </div>
+            <div className="play-content">
+              {/* Chat stays mounted so scroll position and input survive tab
+                  round-trips; hidden via CSS rather than unmounted. */}
+              <div
+                className={`play-tab-panel${playTab === "campaign" ? "" : " play-tab-hidden"}`}
+                role="tabpanel"
+                id="play-panel-campaign"
+                aria-labelledby="play-tab-campaign"
+              >
+                <Chat
+                  entries={entries}
+                  busy={busy}
+                  error={error}
+                  onSend={handleSendAction}
+                  revealCount={turn.revealCount}
+                  onRollRevealed={turn.onRollRevealed}
+                />
+              </div>
+              {playTab === "character" && (
+                <div
+                  className="play-tab-panel"
+                  role="tabpanel"
+                  id="play-panel-character"
+                  aria-labelledby="play-tab-character"
+                >
+                  <StateView state={state} />
+                  {character !== null && (
+                    <CharacterSheetView character={character} />
+                  )}
+                </div>
+              )}
+              {playTab === "inventory" && (
+                <div
+                  className="play-tab-panel"
+                  role="tabpanel"
+                  id="play-panel-inventory"
+                  aria-labelledby="play-tab-inventory"
+                >
                   <section className="panel">
                     <h2>Inventory</h2>
                     <FilterBar
@@ -439,12 +518,27 @@ export default function App() {
                       onItemClick={handleItemClick}
                     />
                   </section>
-                )}
-              </aside>
+                </div>
+              )}
+              {playTab === "dm-style" && (
+                <div
+                  className="play-tab-panel"
+                  role="tabpanel"
+                  id="play-panel-dm-style"
+                  aria-labelledby="play-tab-dm-style"
+                >
+                  <DmStylePanel
+                    sessionId={session.session_id}
+                    value={dmStyle}
+                    onChange={setDmStyle}
+                  />
+                </div>
+              )}
             </div>
             {selectedItem !== null && (
               <ItemModal
                 item={selectedItem}
+                busy={itemBusy}
                 onClose={() => setSelectedItem(null)}
                 onEquip={(item) => handleItemAction("equip", item)}
                 onUnequip={(item) => handleItemAction("unequip", item)}

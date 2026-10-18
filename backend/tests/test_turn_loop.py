@@ -6,8 +6,10 @@ import random
 
 from open_tavern.character import normalize
 from open_tavern.dice import roll_expression
-from open_tavern.state import new_state
+from open_tavern.state import apply_hp, new_state
 from open_tavern.story import RollOutcome, TurnResult, turn
+from open_tavern.story.prompts import user_action_prompt
+from open_tavern.story.style import TONES, VERBOSITIES, DmStyle
 
 
 class FakeClient:
@@ -65,6 +67,17 @@ def test_turn_no_check_applies_state_tags_without_second_call():
     assert result.llm_calls == 1
     assert result.state.current_hp == state.current_hp - 3
     assert any(item.name == "potion" for item in result.state.character.inventory)
+
+
+def test_turn_negative_damage_total_does_not_heal():
+    """A damage tag whose total is negative (``1d6-100``) must not restore HP."""
+    state = apply_hp(new_state(_character()), -5)
+    client = FakeClient(["Blood wells. [DAMAGE:1d6-100]"])
+
+    result = turn("I swing wildly", state, [], client, rng=random.Random(0))
+
+    assert result.llm_calls == 1
+    assert result.state.current_hp == state.current_hp
 
 
 # --- check: two calls, engine rolls -------------------------------------
@@ -141,6 +154,100 @@ def test_turn_check_falls_back_to_first_narration_when_second_empty():
     assert result.state.current_hp == state.max_hp - 1
 
 
+# --- on_rolls callback: exactly once, before phase 2 ---------------------
+
+
+def test_turn_on_rolls_fires_once_between_phase_one_and_phase_two():
+    state = new_state(_character())
+    first = "You swing your sword. [CHECK:strength DC15] [DAMAGE:2d6]"
+    second = "Your blow lands true; the orc staggers back."
+    events: list[str] = []
+
+    class OrderRecordingClient(FakeClient):
+        """FakeClient that records when each chat call starts."""
+
+        def chat(self, messages, temperature=0.7, json_mode=False):
+            events.append("chat")
+            return super().chat(messages, temperature, json_mode)
+
+    client = OrderRecordingClient([first, second])
+    fired: list[tuple[RollOutcome, ...]] = []
+
+    def on_rolls(rolls):
+        events.append("rolls")
+        fired.append(rolls)
+
+    result = turn(
+        "I attack the orc",
+        state,
+        [],
+        client,
+        rng=random.Random(42),
+        on_rolls=on_rolls,
+    )
+
+    # resolved after the first chat, before the follow-up prompt is sent
+    assert events == ["chat", "rolls", "chat"]
+    assert result.llm_calls == 2
+    assert len(fired) == 1
+    assert fired[0] == result.rolls
+    assert len(fired[0]) == 1
+    roll = fired[0][0]
+    assert isinstance(roll, RollOutcome)
+    assert roll.name == "strength"
+    assert roll.dc == 15
+    assert roll.d20 == random.Random(42).randint(1, 20)
+
+
+def test_turn_on_rolls_fires_with_empty_tuple_when_no_checks_resolve():
+    state = new_state(_character())
+    client = FakeClient(["You enter the tavern. The barkeep nods."])
+    fired: list[tuple[RollOutcome, ...]] = []
+
+    result = turn(
+        "I walk in", state, [], client, rng=random.Random(0), on_rolls=fired.append
+    )
+
+    assert result.llm_calls == 1
+    assert fired == [()]
+
+
+def test_turn_on_rolls_not_retriggered_by_second_action_pass():
+    state = new_state(_character())
+    first = "You lunge at the beast. [CHECK:strength DC10]"
+    second = "It dodges. [CHECK:dexterity DC10] [HP:-2]"
+    client = FakeClient([first, second])
+    fired: list[tuple[RollOutcome, ...]] = []
+
+    result = turn(
+        "I lunge", state, [], client, rng=random.Random(3), on_rolls=fired.append
+    )
+
+    assert result.llm_calls == 2
+    # the second (allow_checks=False) pass resolves no roll and must not fire
+    assert len(fired) == 1
+    assert fired[0] == result.rolls
+    assert [roll.name for roll in fired[0]] == ["strength"]
+    assert result.state.current_hp == state.max_hp - 2
+
+
+def test_turn_recent_history_projects_only_role_and_content():
+    history = [
+        {"role": "assistant", "content": "The door opens.", "rolls": [{"name": "x"}]},
+        {"role": "user", "content": "I look around."},
+    ]
+    state = new_state(_character())
+    client = FakeClient(["The door creaks open."])
+
+    turn("I look around", state, history, client, rng=random.Random(0))
+
+    sent = client.calls[0]["messages"]
+    # engine-only keys never reach the LLM payload
+    assert history[0] not in sent
+    assert {"role": "assistant", "content": "The door opens."} in sent
+    assert history[1] in sent
+
+
 def test_turn_second_response_does_not_retrigger_checks():
     state = new_state(_character())
     first = "You lunge at the beast. [CHECK:strength DC10]"
@@ -167,3 +274,56 @@ def test_turn_appends_player_action_and_final_narration_to_messages():
     assert history[0] in sent
     # player action is wrapped as untrusted data
     assert any("<player_action>" in message["content"] for message in sent)
+
+
+def test_turn_forwards_say_kind_to_last_message():
+    state = new_state(_character())
+    client = FakeClient(["The barkeep nods."])
+    turn("Evening, friend.", state, [], client, rng=random.Random(0), kind="say")
+
+    sent = client.calls[0]["messages"]
+    last = sent[-1]
+    assert last["role"] == "user"
+    assert "says the following aloud, in character" in last["content"]
+    assert "<player_action>" in last["content"]
+    assert "Evening, friend." in last["content"]
+
+
+def test_turn_forwards_continue_kind_to_last_message():
+    state = new_state(_character())
+    client = FakeClient(["Time passes."])
+    turn("", state, [], client, rng=random.Random(0), kind="continue")
+
+    last = client.calls[0]["messages"][-1]
+    assert last["role"] == "user"
+    assert "has not declared an action" in last["content"]
+    assert "Advance the scene on your own" in last["content"]
+    assert "<player_action>" not in last["content"]
+
+
+def test_turn_default_kind_is_act():
+    state = new_state(_character())
+    client = FakeClient(["The door creaks open."])
+    turn("I look around", state, [], client, rng=random.Random(0))
+
+    last = client.calls[0]["messages"][-1]
+    assert last["content"] == user_action_prompt("I look around")
+
+
+def test_turn_forwards_style_to_system_prompt():
+    state = new_state(_character())
+    client = FakeClient(["The alley stinks of fish."])
+    turn(
+        "I walk in",
+        state,
+        [],
+        client,
+        rng=random.Random(0),
+        style=DmStyle("gritty", "concise", "speak like a sea dog"),
+    )
+
+    system = client.calls[0]["messages"][0]["content"]
+    assert "NARRATION STYLE:" in system
+    assert TONES["gritty"] in system
+    assert VERBOSITIES["concise"] in system
+    assert "speak like a sea dog" in system

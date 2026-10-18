@@ -16,9 +16,11 @@ import json
 
 from fastapi.testclient import TestClient
 
+from open_tavern.api.llm import get_client
 from open_tavern.api.main import create_app
-from open_tavern.api.routes import get_client, get_storage
+from open_tavern.api.runtime import get_storage
 from open_tavern.storage import Storage
+from open_tavern.story.style import TONES
 
 #: Raw character sheet the fake LLM returns for generation. Derived values
 #: (modifiers, proficiency bonus, HP) are computed by code, never trusted here.
@@ -39,6 +41,19 @@ _STRENGTH_MODIFIER: int = (16 - 10) // 2
 _MAX_HP: int = 17
 
 _FOLLOW_UP_NARRATION: str = "You slip past the goblin's guard and drive it back."
+
+
+def _parse_sse(body: str) -> list[tuple[str, dict]]:
+    """Split a materialized SSE body into ``(event, data)`` frames."""
+    frames: list[tuple[str, dict]] = []
+    event: str | None = None
+    for line in body.splitlines():
+        if line.startswith("event:"):
+            event = line[len("event:") :].strip()
+        elif line.startswith("data:"):
+            frames.append((event, json.loads(line[len("data:") :].strip())))
+            event = None
+    return frames
 
 
 class FakeLLMClient:
@@ -80,11 +95,26 @@ def test_full_flow_end_to_end() -> None:
         app.dependency_overrides[get_client] = lambda: fake
         client = TestClient(app)
 
-        # 1. Create a session.
-        resp = client.post("/sessions", json={"world_theme": "a haunted tavern"})
+        # 1. Create a session with a DM narration style.
+        resp = client.post(
+            "/sessions",
+            json={
+                "world_theme": "a haunted tavern",
+                "dm_style": {
+                    "tone": "gritty",
+                    "verbosity": "concise",
+                    "custom_tone": "speak like a sea dog",
+                },
+            },
+        )
         assert resp.status_code == 201
         session_id = resp.json()["session_id"]
         assert session_id
+        assert resp.json()["dm_style"] == {
+            "tone": "gritty",
+            "verbosity": "concise",
+            "custom_tone": "speak like a sea dog",
+        }
 
         # 2. Generate a character from a free-text description.
         resp = client.post(
@@ -103,7 +133,17 @@ def test_full_flow_end_to_end() -> None:
             json={"action": "attack the goblin"},
         )
         assert resp.status_code == 200
-        data = resp.json()
+        assert resp.headers["content-type"].startswith("text/event-stream")
+
+        # The DM narration style reaches the GM system prompt.
+        gm_system = fake.calls[1][0]["content"]
+        assert TONES["gritty"] in gm_system
+        assert "speak like a sea dog" in gm_system
+
+        # Frames: the resolved check streams first, then the terminal message.
+        frames = _parse_sse(resp.text)
+        assert [name for name, _ in frames] == ["roll", "message"]
+        data = frames[-1][1]
 
         # Outcome narration comes from the second (roll-result) phase.
         assert data["narration"] == _FOLLOW_UP_NARRATION
@@ -129,7 +169,12 @@ def test_full_flow_end_to_end() -> None:
         # 4. Reload from the same database: action + narration persisted.
         messages = store.load_messages(session_id)
         assert {"role": "user", "content": "attack the goblin"} in messages
-        assert {"role": "assistant", "content": _FOLLOW_UP_NARRATION} in messages
+        # The d20 is unseeded here, so match the persisted roll by shape.
+        assistant = [m for m in messages if m["role"] == "assistant"]
+        assert len(assistant) == 1
+        assert assistant[0]["content"] == _FOLLOW_UP_NARRATION
+        assert [roll["name"] for roll in assistant[0]["rolls"]] == ["strength"]
+        assert [roll["dc"] for roll in assistant[0]["rolls"]] == [12]
 
         # Character persisted and reconstructs with recomputed derived values.
         saved_character = store.load_character(session_id)

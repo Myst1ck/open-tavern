@@ -1,10 +1,11 @@
+import ReactMarkdown from "react-markdown";
+
 import type {
   AbilityScores,
   CharacterSheet,
   Goal,
   GoalStatus,
-  Item,
-} from "../api";
+} from "../api/types";
 
 const ABILITY_LABELS: Array<{ short: string; key: keyof AbilityScores }> = [
   { short: "STR", key: "strength" },
@@ -73,23 +74,31 @@ export default function CharacterSheetView({ character }: CharacterSheetProps) {
       {personality !== "" && (
         <div className="sheet-persona-block">
           <h3>Personality</h3>
-          <p className="sheet-persona">{personality}</p>
+          <div className="prose sheet-persona">
+            <ReactMarkdown>{personality}</ReactMarkdown>
+          </div>
         </div>
       )}
       {appearance !== "" && (
         <div className="sheet-persona-block">
           <h3>Appearance</h3>
-          <p className="sheet-persona">{appearance}</p>
+          <div className="prose sheet-persona">
+            <ReactMarkdown>{appearance}</ReactMarkdown>
+          </div>
         </div>
       )}
       {motivation !== "" && (
         <div className="sheet-persona-block">
           <h3>Motivation</h3>
-          <p className="sheet-persona">{motivation}</p>
+          <div className="prose sheet-persona">
+            <ReactMarkdown>{motivation}</ReactMarkdown>
+          </div>
         </div>
       )}
       {!hasPersona && backstory !== "" && (
-        <p className="sheet-backstory">{backstory}</p>
+        <div className="prose sheet-backstory">
+          <ReactMarkdown>{backstory}</ReactMarkdown>
+        </div>
       )}
       <div className="sheet-stats">
         <span>
@@ -116,48 +125,32 @@ export default function CharacterSheetView({ character }: CharacterSheetProps) {
       <h3>Skills</h3>
       <ul className="skill-list">
         {Object.entries(character.skills).map(([skill, proficient]) => {
-          const abilityKey = SKILL_ABILITIES[skill] ?? "strength";
+          const abilityKey: keyof AbilityScores | undefined =
+            SKILL_ABILITIES[skill];
+          // Unknown skill names have no ability mapping, so show no modifier
+          // rather than borrowing the STR modifier.
           const total =
-            abilityModifier(safeScore(character.abilities[abilityKey])) +
-            (proficient ? character.proficiency_bonus : 0);
+            abilityKey !== undefined
+              ? abilityModifier(safeScore(character.abilities[abilityKey])) +
+                (proficient ? character.proficiency_bonus : 0)
+              : null;
           return (
             <li key={skill}>
               <span className="skill-name">{skill}</span>
               <span className={proficient ? "skill-tag trained" : "skill-tag"}>
                 {proficient ? "trained" : "untrained"}
               </span>
-              <span className="skill-mod">{formatModifier(total)}</span>
+              <span className="skill-mod">
+                {total !== null ? formatModifier(total) : "—"}
+              </span>
             </li>
           );
         })}
       </ul>
-      <InventoryList items={character.inventory} />
       <ItemList title="Conditions" items={character.conditions} />
       <GoalList title="Goals" items={character.goals} />
       <GoalList title="Quests" items={character.quests} />
     </section>
-  );
-}
-
-function InventoryList({ items }: { items: Item[] }) {
-  return (
-    <>
-      <h3>Inventory</h3>
-      {items.length === 0 ? (
-        <p className="muted">None</p>
-      ) : (
-        <ul className="chip-list">
-          {items.map((item) => (
-            <li key={item.id} className="chip">
-              {item.name}
-              {item.equipped ? (
-                <span className="equipped-badge"> (equipped)</span>
-              ) : null}
-            </li>
-          ))}
-        </ul>
-      )}
-    </>
   );
 }
 

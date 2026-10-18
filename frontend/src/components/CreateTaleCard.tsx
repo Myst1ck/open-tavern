@@ -1,8 +1,4 @@
-export default function CreateTaleCard({
-  onCreate,
-}: {
-  onCreate: () => void;
-}) {
+export default function CreateTaleCard({ onCreate }: { onCreate: () => void }) {
   return (
     <section className="panel tales-panel" aria-label="Create new tale">
       <button

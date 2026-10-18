@@ -19,6 +19,7 @@ from open_tavern.story.prompts import (
     roll_result_prompt,
     user_action_prompt,
 )
+from open_tavern.story.style import TONES, VERBOSITIES, DmStyle, normalize_dm_style
 
 __all__ = [
     "DEFAULT_BASE_URL",
@@ -36,4 +37,8 @@ __all__ = [
     "gm_system_prompt",
     "roll_result_prompt",
     "user_action_prompt",
+    "DmStyle",
+    "TONES",
+    "VERBOSITIES",
+    "normalize_dm_style",
 ]

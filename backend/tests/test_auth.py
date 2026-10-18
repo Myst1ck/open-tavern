@@ -1,7 +1,8 @@
 """API behavior tests that previously lived alongside the bearer-token suite.
 
 ``OPENAI_API_KEY`` is optional: the app starts without it and only
-OpenAI-dependent requests fail (HTTP 503) until a key is supplied.
+OpenAI-dependent requests fail (HTTP 503) until a key is supplied. The Settings
+menu is the intended key source; the env var is a fallback.
 """
 
 from __future__ import annotations
@@ -9,8 +10,9 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from open_tavern.api.llm import get_client
 from open_tavern.api.main import create_app
-from open_tavern.api.routes import get_client, get_storage
+from open_tavern.api.runtime import get_storage
 from open_tavern.storage import Storage
 
 
@@ -53,3 +55,4 @@ def test_openai_request_503_without_key(monkeypatch, storage):
     resp = client.post("/sessions/any/character", json={"description": "elf"})
 
     assert resp.status_code == 503
+    assert "Settings" in resp.json()["detail"]

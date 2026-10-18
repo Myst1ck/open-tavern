@@ -12,7 +12,13 @@ from open_tavern.character import CharacterSheet, Goal, Quest, normalize
 from open_tavern.character.items import BaseType, Item
 from open_tavern.state import new_state, set_scene
 from open_tavern.storage import Storage
-from open_tavern.storage.db import MESSAGE_LOAD_LIMIT, SchemaTooNewError
+from open_tavern.storage.db import (
+    MESSAGE_LOAD_LIMIT,
+    SchemaCorruptError,
+    SchemaTooNewError,
+)
+from open_tavern.story import RollOutcome
+from open_tavern.story.style import DmStyle, normalize_dm_style
 
 
 def _make_character(name: str = "Aria") -> CharacterSheet:
@@ -134,6 +140,9 @@ def test_migration_preserves_legacy_unversioned_saves(tmp_path):
     conn.row_factory = sqlite3.Row
     try:
         cols = {row["name"] for row in conn.execute("PRAGMA table_info(sessions)")}
+        message_cols = {
+            row["name"] for row in conn.execute("PRAGMA table_info(messages)")
+        }
         rows = [tuple(r) for r in conn.execute("SELECT id, world_theme FROM sessions")]
         version = conn.execute(
             "SELECT value FROM meta WHERE key = 'schema_version'"
@@ -143,8 +152,9 @@ def test_migration_preserves_legacy_unversioned_saves(tmp_path):
 
     # Legacy version-1 saves are MIGRATED forward, never dropped.
     assert {"title", "updated_at", "state_json", "premise"} <= cols
+    assert "rolls_json" in message_cols
     assert rows == [("abc", "gothic")]
-    assert version is not None and version["value"] == "4"
+    assert version is not None and version["value"] == "5"
 
 
 def test_migration_applies_steps_in_order(tmp_path):
@@ -171,7 +181,9 @@ def test_migration_applies_steps_in_order(tmp_path):
     try:
         tables = {
             row["name"]
-            for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
         }
         cols = {row["name"] for row in conn.execute("PRAGMA table_info(sessions)")}
         rows = [tuple(r) for r in conn.execute("SELECT id, world_theme FROM sessions")]
@@ -181,11 +193,53 @@ def test_migration_applies_steps_in_order(tmp_path):
     finally:
         conn.close()
 
-    # v2 -> v3 (items table) -> v4 (session columns), data preserved.
+    # v2 -> v3 (items table) -> v4 (session columns) -> v5 (rolls column and
+    # dm_style_json), data preserved.
     assert "items" in tables
     assert {"title", "updated_at", "state_json", "premise"} <= cols
     assert rows == [("abc", "gothic")]
-    assert version is not None and version["value"] == "4"
+    assert version is not None and version["value"] == "5"
+
+
+def test_migration_v4_adds_dm_style_column(tmp_path):
+    path = tmp_path / "v4.db"
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    conn.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '4')")
+    conn.execute(
+        "CREATE TABLE sessions ("
+        "id TEXT PRIMARY KEY, created_at TEXT NOT NULL, world_theme TEXT NOT NULL, "
+        "premise TEXT, title TEXT, updated_at TEXT, state_json TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO sessions (id, created_at, world_theme, premise) "
+        "VALUES ('abc', 't0', 'gothic', 'a cursed inn')"
+    )
+    conn.commit()
+    conn.close()
+
+    store = Storage(str(path))
+    store.init()
+    store.close()
+
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    try:
+        cols = {row["name"] for row in conn.execute("PRAGMA table_info(sessions)")}
+        rows = [
+            tuple(r)
+            for r in conn.execute("SELECT id, world_theme, premise FROM sessions")
+        ]
+        version = conn.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version'"
+        ).fetchone()
+    finally:
+        conn.close()
+
+    # v4 -> v5 adds dm_style_json; existing columns and rows survive.
+    assert "dm_style_json" in cols
+    assert rows == [("abc", "gothic", "a cursed inn")]
+    assert version is not None and version["value"] == "5"
 
 
 def test_migration_refuses_newer_database(tmp_path):
@@ -222,6 +276,32 @@ def test_migration_refuses_newer_database(tmp_path):
     assert rows == [("abc",)]
 
 
+def test_init_refuses_unparseable_schema_version(tmp_path):
+    path = tmp_path / "corrupt.db"
+    store = Storage(str(path))
+    store.init()
+    store.close()
+    conn = sqlite3.connect(path)
+    conn.execute("UPDATE meta SET value = 'garbage' WHERE key = 'schema_version'")
+    conn.commit()
+    conn.close()
+
+    store = Storage(str(path))
+    with pytest.raises(SchemaCorruptError):
+        store.init()
+    store.close()
+
+    # Refused, not rebuilt: the unparseable version is still on disk.
+    conn = sqlite3.connect(path)
+    try:
+        version = conn.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version'"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert version is not None and version[0] == "garbage"
+
+
 # --- premise ---------------------------------------------------------------
 
 
@@ -246,6 +326,44 @@ def test_create_session_premise_empty_string(storage):
     loaded = storage.load_session(session_id)
     assert loaded is not None
     assert loaded["premise"] == ""
+
+
+# --- dm style ------------------------------------------------------------
+
+
+def test_create_session_and_probe_dm_style(storage):
+    style = DmStyle("gritty", "concise", "speak like a sea dog")
+    session_id = storage.create_session("gothic", dm_style=style)
+    assert storage.session_dm_style(session_id) == normalize_dm_style(style)
+
+
+def test_create_session_without_dm_style_probes_none(storage):
+    session_id = storage.create_session("gothic")
+    assert storage.session_dm_style(session_id) is None
+    assert storage.session_dm_style("unknown-session") is None
+
+
+def test_create_session_normalizes_dm_style_dict(storage):
+    session_id = storage.create_session(
+        "gothic", dm_style={"tone": "nope", "custom_tone": 7}
+    )
+    assert storage.session_dm_style(session_id) == normalize_dm_style(
+        {"tone": "nope", "custom_tone": 7}
+    )
+
+
+def test_update_dm_style_roundtrip_and_clear(storage):
+    session_id = storage.create_session("gothic")
+    style = normalize_dm_style({"tone": "heroic", "verbosity": "rich"})
+
+    assert storage.update_dm_style(session_id, style) is True
+    assert storage.session_dm_style(session_id) == style
+
+    # Clearing stores NULL; cleared and legacy rows probe as None.
+    assert storage.update_dm_style(session_id, None) is True
+    assert storage.session_dm_style(session_id) is None
+
+    assert storage.update_dm_style("unknown-session", style) is False
 
 
 # --- sessions ------------------------------------------------------------
@@ -379,9 +497,125 @@ def test_append_and_load_messages_ordered(storage):
 
     assert storage.load_messages(session_id) == [
         {"role": "user", "content": "first"},
-        {"role": "assistant", "content": "second"},
+        {"role": "assistant", "content": "second", "rolls": []},
         {"role": "user", "content": "third"},
     ]
+
+
+def _make_roll(
+    name: str = "strength",
+    *,
+    dc: int = 12,
+    modifier: int = 2,
+    d20: int = 15,
+) -> RollOutcome:
+    total = d20 + modifier
+    return RollOutcome(
+        name=name,
+        dc=dc,
+        modifier=modifier,
+        d20=d20,
+        total=total,
+        success=total >= dc,
+        crit_success=d20 == 20,
+        crit_fail=d20 == 1,
+    )
+
+
+def test_save_turn_persists_rolls_roundtrip(storage):
+    session_id = storage.create_session("gothic")
+    sheet = _make_character()
+    storage.save_character(session_id, sheet)
+
+    storage.save_turn(
+        session_id,
+        new_state(sheet),
+        "attack",
+        "You strike true.",
+        rolls=(_make_roll(),),
+    )
+
+    expected_assistant = {
+        "role": "assistant",
+        "content": "You strike true.",
+        "rolls": [
+            {
+                "name": "strength",
+                "dc": 12,
+                "modifier": 2,
+                "d20": 15,
+                "total": 17,
+                "success": True,
+                "crit_success": False,
+                "crit_fail": False,
+            }
+        ],
+    }
+    assert storage.load_messages(session_id) == [
+        {"role": "user", "content": "attack"},
+        expected_assistant,
+    ]
+
+    # The same rolls reach a reloaded session payload.
+    loaded = storage.load_session(session_id)
+    assert loaded is not None
+    assert loaded["messages"][1] == expected_assistant
+
+
+def test_save_turn_without_rolls_stores_empty_rolls(storage):
+    session_id = storage.create_session("gothic")
+    sheet = _make_character()
+    storage.save_character(session_id, sheet)
+
+    storage.save_turn(session_id, new_state(sheet), "look", "Nothing happens.")
+
+    assert storage.load_messages(session_id)[1]["rolls"] == []
+
+
+def test_load_messages_legacy_rows_without_rolls_json(tmp_path):
+    """Rows saved before schema v5 load with an empty ``rolls`` list."""
+    path = tmp_path / "legacy.db"
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    conn.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '4')")
+    conn.execute(
+        "CREATE TABLE sessions ("
+        "id TEXT PRIMARY KEY, created_at TEXT NOT NULL, world_theme TEXT NOT NULL, "
+        "premise TEXT, title TEXT, updated_at TEXT, state_json TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE characters ("
+        "id INTEGER PRIMARY KEY, session_id TEXT NOT NULL UNIQUE, "
+        "data_json TEXT NOT NULL, character_name TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE messages ("
+        "id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, role TEXT NOT NULL, "
+        "content TEXT NOT NULL, created_at TEXT NOT NULL)"
+    )
+    conn.execute(
+        "CREATE TABLE items ("
+        "id TEXT PRIMARY KEY, session_id TEXT NOT NULL, character_id TEXT NOT NULL, "
+        "item_json TEXT NOT NULL, created_at TEXT NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO sessions (id, created_at, world_theme) VALUES ('abc', 't0', 'gothic')"
+    )
+    conn.execute(
+        "INSERT INTO messages (session_id, role, content, created_at) "
+        "VALUES ('abc', 'assistant', 'old narration', 't0')"
+    )
+    conn.commit()
+    conn.close()
+
+    store = Storage(str(path))
+    store.init()
+    try:
+        assert store.load_messages("abc") == [
+            {"role": "assistant", "content": "old narration", "rolls": []}
+        ]
+    finally:
+        store.close()
 
 
 def test_save_and_load_state_roundtrip(storage):
@@ -412,6 +646,30 @@ def test_save_state_touches_updated_at(storage):
 
     # Saving state bumps ``first`` ahead of ``second`` in updated_at order.
     assert storage.list_sessions()[0]["id"] == first
+
+
+def test_save_opening_writes_state_and_message(storage):
+    session_id = storage.create_session("gothic")
+    sheet = _make_character()
+    state = new_state(sheet)
+
+    storage.save_opening(session_id, state, "Welcome to the crypt.")
+
+    assert storage.load_state(session_id, sheet) == state
+    assert storage.load_messages(session_id) == [
+        {"role": "assistant", "content": "Welcome to the crypt.", "rolls": []}
+    ]
+
+
+def test_save_opening_without_message_writes_state_only(storage):
+    session_id = storage.create_session("gothic")
+    sheet = _make_character()
+    state = new_state(sheet)
+
+    storage.save_opening(session_id, state, None)
+
+    assert storage.load_state(session_id, sheet) == state
+    assert storage.load_messages(session_id) == []
 
 
 # --- list_sessions --------------------------------------------------------
