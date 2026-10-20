@@ -12,9 +12,6 @@ interface ChatProps {
   busy: boolean;
   error: string | null;
   onSend: (action: string, kind: ActionKind) => void;
-  /** Roll cards already revealed in the active set (0 = only the first is up). */
-  revealCount: number;
-  onRollRevealed: (rollSetId: string, index: number) => void;
 }
 
 const MODE_STORAGE_KEY = "tavern.action-mode";
@@ -46,8 +43,6 @@ export default function Chat({
   busy,
   error,
   onSend,
-  revealCount,
-  onRollRevealed,
 }: ChatProps) {
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<ActionKind>(readStoredMode);
@@ -101,11 +96,7 @@ export default function Chat({
               {entry.kind === "message" ? (
                 <MessageBubble entry={entry} />
               ) : (
-                <RollSetBlock
-                  entry={entry}
-                  revealCount={revealCount}
-                  onRevealed={onRollRevealed}
-                />
+                <RollSetBlock entry={entry} />
               )}
             </div>
           )}
@@ -189,28 +180,21 @@ function MessageBubble({ entry }: { entry: MessageEntry }) {
 
 interface RollSetBlockProps {
   entry: RollSetEntry;
-  revealCount: number;
-  onRevealed: (rollSetId: string, index: number) => void;
 }
 
 /**
- * Mounts cards one at a time so each die starts tumbling only once the previous
- * one has revealed — RollCard starts its own timer on mount. Revealed sets
- * (resumed transcripts) mount everything at once, already revealed.
+ * Mounts every card at once: the dice resolved together server-side, so they
+ * tumble in parallel. Each card runs its own short timer (RollCard). Revealed
+ * sets (resumed transcripts) mount already shown.
  */
-function RollSetBlock({ entry, revealCount, onRevealed }: RollSetBlockProps) {
-  const mounted =
-    entry.state === "pending"
-      ? Math.min(revealCount + 1, entry.rolls.length)
-      : entry.rolls.length;
+function RollSetBlock({ entry }: RollSetBlockProps) {
   return (
     <div className="roll-set">
-      {entry.rolls.slice(0, mounted).map((roll, index) => (
+      {entry.rolls.map((roll, index) => (
         <RollCard
           key={`${entry.id}-${index}`}
           roll={roll}
           initialRevealed={entry.state === "revealed"}
-          onRevealed={() => onRevealed(entry.id, index)}
         />
       ))}
     </div>

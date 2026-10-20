@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 import type { RollOutcome } from "../api/types";
 import Die from "./Die";
 
-// Minimum time the die tumbles before the result is shown. Card-level only:
-// sequencing a whole roll set is the caller's job (useTurnStream).
-const MIN_ROLL_MS = 2000;
+// How long the die tumbles before its already-decided result is shown. Pure
+// loading decoration: the narration is never gated on this (useTurnStream).
+const MIN_ROLL_MS = 700;
 
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 
@@ -27,23 +27,18 @@ function usePrefersReducedMotion(): boolean {
 
 interface RollCardProps {
   roll: RollOutcome;
-  onRevealed: () => void;
-  /** Born in Phase B (resumed transcripts): no tumble, no onRevealed call. */
+  /** Born already-shown (resumed transcripts): no tumble. */
   initialRevealed?: boolean;
 }
 
 export default function RollCard({
   roll,
-  onRevealed,
   initialRevealed = false,
 }: RollCardProps) {
   const reducedMotion = usePrefersReducedMotion();
   const [revealed, setRevealed] = useState(reducedMotion || initialRevealed);
-  const notified = useRef(initialRevealed);
-  const onRevealedRef = useRef(onRevealed);
-  onRevealedRef.current = onRevealed;
 
-  // Phase A -> Phase B: timer, or instantly when motion is reduced.
+  // Tumble -> result: timer, or instantly when motion is reduced.
   useEffect(() => {
     if (revealed) {
       return;
@@ -55,14 +50,6 @@ export default function RollCard({
     const timer = window.setTimeout(() => setRevealed(true), MIN_ROLL_MS);
     return () => window.clearTimeout(timer);
   }, [revealed, reducedMotion]);
-
-  useEffect(() => {
-    if (!revealed || notified.current) {
-      return;
-    }
-    notified.current = true;
-    onRevealedRef.current();
-  }, [revealed]);
 
   const modifier =
     roll.modifier >= 0 ? `+${roll.modifier}` : `${roll.modifier}`;

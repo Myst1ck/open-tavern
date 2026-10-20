@@ -400,9 +400,9 @@ export default function App() {
 
   /**
    * Hand one player turn to the stream driver: it appends the optimistic player
-   * entry, renders the streamed roll set, and reveals the buffered narration
-   * once every card has landed. The `kind` frames the action for the backend and
-   * styles the player bubble.
+   * entry and the streamed roll set, and lands the narration the moment the AI
+   * response arrives — the dice animate as decoration, never a gate. The `kind`
+   * frames the action for the backend and styles the player bubble.
    */
   const handleSendAction = (action: string, kind: ActionKind) => {
     // A turn sent while an item mutation is in flight would persist state
@@ -483,8 +483,6 @@ export default function App() {
                   busy={busy}
                   error={error}
                   onSend={handleSendAction}
-                  revealCount={turn.revealCount}
-                  onRollRevealed={turn.onRollRevealed}
                 />
               </div>
               {playTab === "character" && (
